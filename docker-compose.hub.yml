@@ -2,9 +2,7 @@ name: paie-server
 
 services:
   application:
-    image: paie-server-application
-    build:
-      context: .
+    image: ${PAIE_SERVER_IMAGE:-mellykelkun/paie-server:latest}
     container_name: paie-server-application
     env_file:
       - .env
@@ -28,7 +26,7 @@ services:
     restart: unless-stopped
 
   sandbox:
-    image: paie-server-application
+    image: ${PAIE_SERVER_IMAGE:-mellykelkun/paie-server:latest}
     container_name: paie-server-sandbox
     command: npm run sandbox
     env_file:

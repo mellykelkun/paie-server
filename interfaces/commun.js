@@ -108,8 +108,139 @@ function pageHtml(titre, contenu) {
     .titre-ligne form {
       margin: 0;
     }
+    .barre-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 5;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 14px 0;
+      background: #f5f7f8;
+    }
     .section-marchand {
       margin: 22px 0;
+    }
+    .section-configuration {
+      padding-bottom: 8px;
+    }
+    .aide-configuration {
+      display: grid;
+      gap: 8px;
+      margin: 8px 0 14px;
+      padding: 12px;
+      border: 1px solid #cddce3;
+      border-radius: 8px;
+      background: #f6fbfd;
+    }
+    .aide-configuration p {
+      margin: 0;
+      color: #415058;
+      line-height: 1.45;
+    }
+    .aide-configuration strong {
+      color: #172026;
+    }
+    .formulaire-configuration {
+      display: grid;
+      gap: 10px;
+    }
+    .liste-configuration {
+      display: grid;
+      gap: 12px;
+    }
+    .champ-configuration {
+      display: grid;
+      gap: 8px;
+      padding: 14px;
+      border: 1px solid #d8e0e3;
+      border-radius: 8px;
+      background: #fbfcfc;
+    }
+    .champ-configuration-entete {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .champ-configuration-entete div {
+      display: grid;
+      gap: 4px;
+    }
+    .champ-configuration-entete label {
+      margin: 0;
+      font-weight: 700;
+    }
+    .champ-configuration-entete span {
+      color: #526066;
+      font-size: 13px;
+      text-align: right;
+    }
+    .champ-configuration p {
+      margin: 0;
+      color: #526066;
+      line-height: 1.45;
+    }
+    .champ-configuration strong {
+      color: #172026;
+    }
+    .champ-configuration code,
+    .liste-technique code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #172026;
+      overflow-wrap: anywhere;
+    }
+    .champ-secret {
+      display: grid;
+      gap: 8px;
+    }
+    .actions-secret {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .actions-secret button {
+      min-height: 40px;
+    }
+    .secret-masque {
+      padding: 8px 10px;
+      border: 1px solid #d8e0e3;
+      border-radius: 6px;
+      background: #ffffff;
+    }
+    .message-copie {
+      margin: 0;
+      color: #0f5132;
+      font-weight: 700;
+    }
+    .case-ligne,
+    .interrupteur-configuration {
+      display: flex;
+      grid-template-columns: none;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      color: #526066;
+    }
+    .case-ligne input,
+    .interrupteur-configuration input {
+      width: auto;
+    }
+    .liste-technique {
+      display: grid;
+      gap: 10px;
+    }
+    .liste-technique article {
+      padding: 12px;
+      border: 1px solid #d8e0e3;
+      border-radius: 8px;
+      background: #fbfcfc;
+    }
+    .liste-technique p {
+      margin: 6px 0 0;
+      color: #526066;
+      line-height: 1.45;
     }
     .description-section {
       max-width: 760px;
@@ -279,6 +410,11 @@ function pageHtml(titre, contenu) {
       background: #f7faf9;
       font-weight: 700;
     }
+    .retour-action p {
+      margin: 6px 0 0;
+      font-weight: 400;
+      line-height: 1.45;
+    }
     .retour-action.succes {
       color: #0f5132;
       border-color: #badbcc;
@@ -293,6 +429,37 @@ function pageHtml(titre, contenu) {
       color: #7c2d12;
       border-color: #fed7aa;
       background: #ffedd5;
+    }
+    .statut-configuration {
+      border-color: #badbcc;
+      background: #f3fbf7;
+    }
+    .statut-configuration p {
+      margin: 8px 0 0;
+      color: #335044;
+      line-height: 1.45;
+    }
+    .formulaire-retablissement {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #badbcc;
+    }
+    .formulaire-retablissement span {
+      color: #526066;
+      line-height: 1.4;
+    }
+    .diagnostic-configuration {
+      border-color: #fed7aa;
+      background: #fff7ed;
+    }
+    .diagnostic-configuration p {
+      margin: 8px 0 0;
+      color: #7c2d12;
+      line-height: 1.45;
     }
     .etat-decision {
       display: inline-block;

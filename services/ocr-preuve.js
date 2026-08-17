@@ -6,8 +6,8 @@ const { PNG } = require("pngjs");
 let workerPromise = null;
 let fileReconnaissance = Promise.resolve();
 
-async function analyserImagePreuve(image, paiement, moyenPaiement) {
-  if (process.env.OCR_PREUVE_ACTIVE === "false") {
+async function analyserImagePreuve(image, paiement, moyenPaiement, configuration = {}) {
+  if (valeurConfiguration(configuration, "OCR_PREUVE_ACTIVE", "true") === "false") {
     return {
       active: false,
       texte: "",
@@ -23,7 +23,7 @@ async function analyserImagePreuve(image, paiement, moyenPaiement) {
     };
   }
 
-  const analyseForensique = analyserForensiqueImage(image);
+  const analyseForensique = analyserForensiqueImage(image, configuration);
   const providerAttendu = determinerProviderAttendu(moyenPaiement);
   const validationImage = analyseForensique.validationImage || {};
 
@@ -58,12 +58,12 @@ async function analyserImagePreuve(image, paiement, moyenPaiement) {
   try {
     const resultat = await executerReconnaissance(image);
     const texte = limiterTexte(resultat.data.text || "", 5000);
-    const analyseZones = await reconnaitreZones(image, providerAttendu, analyseForensique.infosImage);
+    const analyseZones = await reconnaitreZones(image, providerAttendu, analyseForensique.infosImage, configuration);
     const texteAnalyse = [texte, analyseZones.texte].filter(Boolean).join("\n");
     const texteNormalise = normaliserTexte(texteAnalyse);
     const indicesFraude = detecterIndicesFraude(texteNormalise);
     const montantsDetectes = detecterMontants(texteNormalise);
-    const analyseMontant = analyserMontantsDetectes(montantsDetectes, paiement.montant);
+    const analyseMontant = analyserMontantsDetectes(montantsDetectes, paiement.montant, configuration);
     const montantDetecte = analyseMontant.montantPrincipal;
     const montantCorrespond = analyseMontant.correspond;
     const conformiteProvider = analyserConformiteProvider({
@@ -72,6 +72,7 @@ async function analyserImagePreuve(image, paiement, moyenPaiement) {
       moyenPaiement,
       montantsDetectes,
       analyseMontant,
+      configuration,
     });
 
     return {
@@ -137,8 +138,8 @@ async function obtenirWorker() {
   return workerPromise;
 }
 
-async function reconnaitreZones(image, providerAttendu, infosImage) {
-  if (process.env.OCR_ZONES_ACTIVE === "false") {
+async function reconnaitreZones(image, providerAttendu, infosImage, configuration) {
+  if (valeurConfiguration(configuration, "OCR_ZONES_ACTIVE", "true") === "false") {
     return {
       active: false,
       providerAttendu,
@@ -240,9 +241,9 @@ function determinerProviderAttendu(moyenPaiement) {
   return "";
 }
 
-function analyserMontantsDetectes(montantsDetectes, montantAttendu) {
+function analyserMontantsDetectes(montantsDetectes, montantAttendu, configuration) {
   const attendu = Number(montantAttendu);
-  const tolerancePourcent = lireNombreEnv("TOLERANCE_FRAIS_MONTANT_POURCENT", 30);
+  const tolerancePourcent = lireNombreConfiguration(configuration, "TOLERANCE_FRAIS_MONTANT_POURCENT", 30);
   const montants = [...new Set((montantsDetectes || []).map(Number).filter((montant) => Number.isFinite(montant) && montant > 0))];
 
   if (!Number.isFinite(attendu) || attendu <= 0 || montants.length === 0) {
@@ -281,8 +282,8 @@ function analyserMontantsDetectes(montantsDetectes, montantAttendu) {
   };
 }
 
-function lireNombreEnv(nom, defaut) {
-  const valeur = Number(process.env[nom]);
+function lireNombreConfiguration(configuration, nom, defaut) {
+  const valeur = Number(valeurConfiguration(configuration, nom, defaut));
 
   return Number.isFinite(valeur) ? valeur : defaut;
 }
@@ -304,12 +305,12 @@ function detecterIndicesFraude(texteNormalise) {
     .map(([, libelle]) => libelle);
 }
 
-function analyserForensiqueImage(image) {
+function analyserForensiqueImage(image, configuration) {
   const infosImage = lireInfosImage(image);
   const chaines = extraireChainesLisibles(image);
   const texteBrut = normaliserTexte(chaines.join(" "));
   const signaux = [];
-  const validationImage = validerImageDecodee(image, infosImage);
+  const validationImage = validerImageDecodee(image, infosImage, configuration);
   const empreinteVisuelle = validationImage.ok ? calculerEmpreinteVisuelle(validationImage) : null;
   const metadonnees = {
     c2paPresent: /\bc2pa\b|content credentials|jumbf/.test(texteBrut),
@@ -742,9 +743,9 @@ function extraireChainesLisibles(image) {
   return (image.toString("latin1").match(/[\x20-\x7e]{4,}/g) || []).slice(0, 1500);
 }
 
-function validerImageDecodee(image, infosImage) {
+function validerImageDecodee(image, infosImage, configuration) {
   const format = infosImage && infosImage.format;
-  const maxPixels = lireNombreEnv("MAX_PIXELS_PREUVE", 6_000_000);
+  const maxPixels = lireNombreConfiguration(configuration, "MAX_PIXELS_PREUVE", 6_000_000);
   const base = {
     ok: false,
     formatDecode: format || "inconnu",
@@ -972,13 +973,17 @@ function analyserConformiteProvider(donnees) {
   const numerosDetectes = detecterNumerosTelephone(donnees.texteNormalise);
   const referenceDetectee = detecterReference(donnees.texteNormalise, providerAttendu);
   const dateDetectee = detecterDate(donnees.texteNormalise);
-  const analyseMontant = donnees.analyseMontant || analyserMontantsDetectes(donnees.montantsDetectes, donnees.paiement.montant);
+  const analyseMontant = donnees.analyseMontant || analyserMontantsDetectes(
+    donnees.montantsDetectes,
+    donnees.paiement.montant,
+    donnees.configuration
+  );
   const montantCorrespond = analyseMontant.correspond;
   const telephoneCorrespond =
     !numeroAttendu || numerosDetectes.some((numero) => numerosEgaux(numero, numeroAttendu));
   const providerDetecte = detecterProvider(donnees.texteNormalise);
   const dateCoherente = dateDetectee
-    ? dateDansFenetrePaiement(dateDetectee, donnees.paiement)
+    ? dateDansFenetrePaiement(dateDetectee, donnees.paiement, donnees.configuration)
     : false;
   const statutEffectue =
     /\beffectu[ée]?[e]?\b/.test(donnees.texteNormalise) ||
@@ -1216,8 +1221,8 @@ function creerDate(annee, mois, jour, heure, minute) {
   return date;
 }
 
-function dateDansFenetrePaiement(dateRecu, paiement) {
-  const margeAvantHeures = Number(process.env.DELAI_RECU_AVANT_CREATION_HEURES || 12);
+function dateDansFenetrePaiement(dateRecu, paiement, configuration) {
+  const margeAvantHeures = lireNombreConfiguration(configuration, "DELAI_RECU_AVANT_CREATION_HEURES", 12);
   const creation = new Date(paiement.creeLe);
 
   if (!dateRecu || Number.isNaN(creation.getTime())) {
@@ -1248,6 +1253,24 @@ function limiterTexte(valeur, tailleMax) {
   }
 
   return `${texte.slice(0, tailleMax - 3)}...`;
+}
+
+function valeurConfiguration(configuration, nom, defaut) {
+  const valeurConfiguree = configuration && configuration[nom] !== undefined
+    ? String(configuration[nom]).trim()
+    : "";
+
+  if (valeurConfiguree) {
+    return valeurConfiguree.toLowerCase() === "false" ? "false" : valeurConfiguree;
+  }
+
+  const valeurEnv = String(process.env[nom] || "").trim();
+
+  if (valeurEnv) {
+    return valeurEnv.toLowerCase() === "false" ? "false" : valeurEnv;
+  }
+
+  return String(defaut);
 }
 
 module.exports = {

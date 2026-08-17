@@ -7,34 +7,17 @@ const chargerFichierEnv = require("../environnement");
 chargerFichierEnv();
 chargerFichierEnv(".env.sandbox");
 
+const {
+  chargerConfigurationApplication,
+  valeurConfiguration,
+} = require("../configuration");
+
 const port = Number(process.env.PORT_SANDBOX || 4000);
-const environnementExecution = String(process.env.ENVIRONNEMENT || process.env.NODE_ENV || "developpement");
-const urlApiPaiement = process.env.URL_API_PAIEMENT_INTERNE || "http://localhost:3000";
-const urlSandboxPublic = process.env.URL_SANDBOX_PUBLIC || `http://localhost:${port}`;
-const urlWebhookSandbox =
-  process.env.URL_SANDBOX_WEBHOOK || `${urlSandboxPublic}/webhook/paiement`;
-const cleApiApplication = lireSecretEnv("CLE_API_APPLICATION", "cle_application_dev");
-const cleOrigineSandbox = lireSecretEnv("CLE_ORIGINE_SANDBOX", "");
-const secretWebhookSandbox = lireSecretEnv("SECRET_WEBHOOK_SANDBOX", "secret_sandbox_dev");
-const idClientSandbox = process.env.ID_CLIENT_SANDBOX || "client_sandbox_demo";
+const urlSandboxPublicDemarrage = process.env.URL_SANDBOX_PUBLIC || `http://localhost:${port}`;
 
 const dossierDonnees = path.join(__dirname, "donnees");
 const fichierCommandes = path.join(dossierDonnees, "commandes.json");
 const TAILLE_MAX_CORPS = 1024 * 1024;
-
-function lireSecretEnv(nom, valeurDeveloppement) {
-  const valeur = String(process.env[nom] || "").trim();
-
-  if (valeur) {
-    return valeur;
-  }
-
-  if (environnementExecution === "production") {
-    throw new Error(`${nom} obligatoire en production.`);
-  }
-
-  return valeurDeveloppement;
-}
 
 const offres = [
   {
@@ -59,10 +42,10 @@ preparerStockage();
 
 const serveur = http.createServer(async (requete, reponse) => {
   try {
-    const url = new URL(requete.url, urlSandboxPublic);
+    const url = new URL(requete.url, urlSandboxPublicDemarrage);
 
     if (requete.method === "GET" && url.pathname === "/") {
-      return envoyerHtml(reponse, 200, afficherAccueil(url.searchParams));
+      return envoyerHtml(reponse, 200, await afficherAccueil(url.searchParams));
     }
 
     if (requete.method === "GET" && url.pathname === "/commandes") {
@@ -96,7 +79,7 @@ const serveur = http.createServer(async (requete, reponse) => {
     if (requete.method === "POST" && url.pathname === "/webhook/paiement") {
       const corpsTexte = await lireCorpsTexte(requete);
 
-      if (!signatureValide(corpsTexte, requete.headers["x-signature-paiement"])) {
+      if (!(await signatureValide(corpsTexte, requete.headers["x-signature-paiement"]))) {
         return envoyerJson(reponse, 401, { message: "Signature de notification invalide." });
       }
 
@@ -114,11 +97,25 @@ const serveur = http.createServer(async (requete, reponse) => {
 });
 
 serveur.listen(port, () => {
-  console.log(`Sandbox marchand demarre sur ${urlSandboxPublic}`);
-  console.log(`API paiement utilisee: ${urlApiPaiement}`);
+  const urlExposee = construireUrlLocaleExposee(process.env.PORT_PUBLIC_SANDBOX, port);
+  const urlOuverte = urlExposee || urlSandboxPublicDemarrage;
+
+  console.log(`Sandbox marchand demarre dans le conteneur: http://localhost:${port}`);
+  console.log(`Adresse a ouvrir sur cette machine: ${urlOuverte}`);
+  console.log("API paiement et webhook lus depuis la configuration marchand.");
 });
 
+async function chargerConfigurationSandbox() {
+  try {
+    return await chargerConfigurationApplication();
+  } catch (erreur) {
+    console.error("Configuration sandbox indisponible, fallback .env:", erreur.message);
+    return {};
+  }
+}
+
 async function creerCommandeSandbox(codeOffre) {
+  const configuration = await chargerConfigurationSandbox();
   const offre = offres.find((element) => element.code === codeOffre);
 
   if (!offre) {
@@ -128,7 +125,7 @@ async function creerCommandeSandbox(codeOffre) {
   const maintenant = new Date().toISOString();
   const commande = {
     id: creerId("commande_sandbox"),
-    idClient: idClientSandbox,
+    idClient: valeurConfiguration(configuration, "ID_CLIENT_SANDBOX", "client_sandbox_demo"),
     offre: offre.code,
     type: offre.type,
     nom: offre.nom,
@@ -144,7 +141,18 @@ async function creerCommandeSandbox(codeOffre) {
     modifieLe: maintenant,
   };
 
-  const paiement = await appelerCreationPaiement(commande);
+  let paiement;
+
+  try {
+    paiement = await appelerCreationPaiement(commande, configuration);
+  } catch (erreur) {
+    return {
+      ok: false,
+      codeHttp: 400,
+      message: `Creation du paiement impossible: ${erreur.message}`,
+    };
+  }
+
   commande.idPaiement = paiement.id;
   commande.jetonPaiement = paiement.jetonPaiement || paiement.jetonClient || paiement.id;
   commande.urlPaiement = paiement.urlPaiement;
@@ -159,6 +167,7 @@ async function creerCommandeSandbox(codeOffre) {
 }
 
 async function abandonnerCommandeSandbox(idCommande) {
+  const configuration = await chargerConfigurationSandbox();
   const commandes = chargerCommandes();
   const commande = commandes.find((element) => element.id === idCommande);
 
@@ -176,6 +185,7 @@ async function abandonnerCommandeSandbox(idCommande) {
 
   if (commande.idPaiement) {
     const identifiantPaiement = commande.jetonPaiement || commande.idPaiement;
+    const urlApiPaiement = valeurConfiguration(configuration, "URL_API_PAIEMENT_INTERNE", "http://localhost:3000");
     const reponse = await fetch(
       `${urlApiPaiement}/paiement/${encodeURIComponent(identifiantPaiement)}/abandonner`,
       {
@@ -201,11 +211,24 @@ async function abandonnerCommandeSandbox(idCommande) {
   return { ok: true, idCommande: commande.id };
 }
 
-async function appelerCreationPaiement(commande) {
+async function appelerCreationPaiement(commande, configuration) {
+  const urlApiPaiement = valeurConfiguration(configuration, "URL_API_PAIEMENT_INTERNE", "http://localhost:3000");
+  const urlSandboxPublic = valeurConfiguration(configuration, "URL_SANDBOX_PUBLIC", `http://localhost:${port}`);
+  const urlWebhookSandbox = valeurConfiguration(
+    configuration,
+    "URL_SANDBOX_WEBHOOK",
+    `${urlSandboxPublic}/webhook/paiement`
+  );
+  const cleApiSandbox = valeurConfiguration(configuration, "CLE_API_SANDBOX", "");
+  const cleOrigineSandbox = valeurConfiguration(configuration, "CLE_ORIGINE_SANDBOX", "");
+  const secretWebhookSandbox = valeurConfiguration(configuration, "SECRET_WEBHOOK_SANDBOX", "secret_sandbox_dev");
   const entetes = {
     "content-type": "application/json",
-    "x-cle-api": cleApiApplication,
   };
+
+  if (cleApiSandbox) {
+    entetes["x-cle-api"] = cleApiSandbox;
+  }
 
   if (cleOrigineSandbox) {
     entetes["x-cle-origine-sandbox"] = cleOrigineSandbox;
@@ -268,7 +291,10 @@ function enregistrerWebhook(evenement) {
   enregistrerCommandes(commandes);
 }
 
-function signatureValide(corps, signatureRecue) {
+async function signatureValide(corps, signatureRecue) {
+  const configuration = await chargerConfigurationSandbox();
+  const secretWebhookSandbox = valeurConfiguration(configuration, "SECRET_WEBHOOK_SANDBOX", "secret_sandbox_dev");
+
   if (!secretWebhookSandbox) {
     return true;
   }
@@ -289,7 +315,7 @@ function signatureValide(corps, signatureRecue) {
   return crypto.timingSafeEqual(Buffer.from(signatureAttendue), Buffer.from(signatureRecue));
 }
 
-function afficherAccueil(parametres) {
+async function afficherAccueil(parametres) {
   const commandes = chargerCommandes();
   traiterRetourClient(parametres, commandes);
   const cartesOffres = offres.map(afficherOffre).join("");
@@ -773,4 +799,14 @@ function formaterDate(valeur) {
 
 function formaterMontant(montant, devise) {
   return `${Number(montant).toLocaleString("fr-FR")} ${echapperHtml(devise)}`;
+}
+
+function construireUrlLocaleExposee(portPublic, portInterne) {
+  const port = Number(portPublic);
+
+  if (!Number.isFinite(port) || port <= 0 || port === Number(portInterne)) {
+    return "";
+  }
+
+  return `http://localhost:${port}`;
 }

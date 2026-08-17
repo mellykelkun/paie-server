@@ -15,6 +15,7 @@ const afficherMarchand = require("./interfaces/marchand");
 const afficherMessage = require("./interfaces/message");
 const afficherConnexionMarchand = require("./interfaces/connexion-marchand");
 const afficherInitialisationMarchand = require("./interfaces/initialisation-marchand");
+const afficherConfigurationMarchand = require("./interfaces/configuration-marchand");
 const {
   afficherPreuveEnvoyee,
   afficherEchecEnvoi,
@@ -22,6 +23,15 @@ const {
 const { creerGestionnaireSessionMarchand } = require("./securite/session-marchand");
 const { verifierCodeTotp } = require("./securite/totp");
 const { analyserImagePreuve } = require("./services/ocr-preuve");
+const {
+  chargerConfigurationApplication,
+  chargerConfigurationPourInterface,
+  enregistrerConfigurationApplication,
+  retablirConfigurationSandboxDocker,
+  valeurConfiguration,
+  booleenConfiguration,
+  nombreConfiguration,
+} = require("./configuration");
 
 const port = Number(process.env.PORT || 3000);
 const urlBase = normaliserUrlPublique(
@@ -29,22 +39,18 @@ const urlBase = normaliserUrlPublique(
   port
 );
 const environnementExecution = String(process.env.ENVIRONNEMENT || process.env.NODE_ENV || "developpement");
-const cleApiApplication = lireSecretEnv("CLE_API_APPLICATION", "cle_application_dev");
-const cleMarchand = lireSecretEnv("CLE_MARCHAND", "cle_marchand_dev");
-const cleOrigineSandbox = String(process.env.CLE_ORIGINE_SANDBOX || "").trim();
+const cleMarchandDemarrage = lireSecretEnv("CLE_MARCHAND", "cle_marchand_dev");
 const sessionMarchand = creerGestionnaireSessionMarchand({
   identifiant: process.env.IDENTIFIANT_MARCHAND || "admin",
-  motDePasse: process.env.MOT_DE_PASSE_MARCHAND || cleMarchand,
+  motDePasse: process.env.MOT_DE_PASSE_MARCHAND || cleMarchandDemarrage,
   secretTotp: process.env.SECRET_2FA_MARCHAND || process.env.SECRET_TOTP_MARCHAND || "",
-  secretSession: lireSecretEnv("SECRET_SESSION_MARCHAND", cleMarchand),
+  secretSession: lireSecretEnv("SECRET_SESSION_MARCHAND", cleMarchandDemarrage),
   dureeMinutes: Number(process.env.DUREE_SESSION_MARCHAND_MINUTES || 30),
   cookieSecurise:
     process.env.COOKIE_SECURISE === "true" ||
     urlBase.startsWith("https://") ||
     environnementExecution === "production",
 });
-const maxTentativesWebhook = Number(process.env.MAX_TENTATIVES_WEBHOOK || 5);
-const delaiRetryWebhookSecondes = Number(process.env.DELAI_RETRY_WEBHOOK_SECONDES || 60);
 const cleInstallationMarchand = String(process.env.CLE_INSTALLATION_MARCHAND || "").trim();
 const NOM_COOKIE_INITIALISATION = "paie_initialisation_marchand";
 const initialisationsMarchand = new Map();
@@ -78,23 +84,6 @@ function lireSecretEnv(nom, valeurDeveloppement) {
 
   return valeurDeveloppement;
 }
-
-const moyensPaiementParDefaut = [
-  {
-    code: "wave",
-    libelle: "Wave",
-    nomCompte: process.env.NOM_COMPTE_WAVE || "Nom du marchand",
-    numeroCompte: process.env.NUMERO_COMPTE_WAVE || "+2250000000000",
-    instructions: "Envoyez le montant de la commande en couvrant les frais Wave.",
-  },
-  {
-    code: "orange_money",
-    libelle: "Orange Money",
-    nomCompte: process.env.NOM_COMPTE_ORANGE || "Nom du marchand",
-    numeroCompte: process.env.NUMERO_COMPTE_ORANGE || "+2250000000000",
-    instructions: "Envoyez le montant de la commande en couvrant les frais Orange Money.",
-  },
-];
 
 preparerDossiers();
 
@@ -248,7 +237,7 @@ const serveur = http.createServer(async (requete, reponse) => {
     }
 
     if (requete.method === "POST" && url.pathname === "/api/paiements") {
-      if (!aAccesApplication(requete)) {
+      if (!(await aAccesApplication(requete))) {
         return envoyerJson(reponse, 401, { message: "Cle API application invalide." });
       }
 
@@ -263,7 +252,7 @@ const serveur = http.createServer(async (requete, reponse) => {
     }
 
     if (requete.method === "GET" && url.pathname === "/api/paiements") {
-      if (!aAccesMarchand(requete, reponse)) {
+      if (!(await aAccesMarchand(requete, reponse))) {
         return envoyerJson(reponse, 401, { message: "Cle marchand invalide." });
       }
 
@@ -304,7 +293,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       requete.method === "POST" &&
       url.pathname.match(/^\/api\/marchand\/paiements\/[^/]+\/accepter$/)
     ) {
-      if (!aAccesMarchand(requete, reponse)) {
+      if (!(await aAccesMarchand(requete, reponse))) {
         return envoyerJson(reponse, 401, { message: "Cle marchand invalide." });
       }
 
@@ -322,7 +311,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       requete.method === "POST" &&
       url.pathname.match(/^\/api\/marchand\/paiements\/[^/]+\/refuser$/)
     ) {
-      if (!aAccesMarchand(requete, reponse)) {
+      if (!(await aAccesMarchand(requete, reponse))) {
         return envoyerJson(reponse, 401, { message: "Cle marchand invalide." });
       }
 
@@ -341,7 +330,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       requete.method === "POST" &&
       url.pathname.match(/^\/api\/marchand\/paiements\/[^/]+\/notification\/renvoyer$/)
     ) {
-      if (!aAccesMarchand(requete, reponse)) {
+      if (!(await aAccesMarchand(requete, reponse))) {
         return envoyerJson(reponse, 401, { message: "Cle marchand invalide." });
       }
 
@@ -436,7 +425,7 @@ const serveur = http.createServer(async (requete, reponse) => {
         return reponse.end();
       }
 
-      if (!aAccesMarchand(requete, reponse)) {
+      if (!(await aAccesMarchand(requete, reponse))) {
         reponse.writeHead(303, { location: "/marchand/connexion" });
         return reponse.end();
       }
@@ -448,8 +437,52 @@ const serveur = http.createServer(async (requete, reponse) => {
       );
     }
 
+    if (requete.method === "GET" && url.pathname === "/marchand/configuration") {
+      if (!(await compteMarchandExiste())) {
+        reponse.writeHead(303, { location: "/marchand/initialisation" });
+        return reponse.end();
+      }
+
+      if (!(await aAccesMarchand(requete, reponse))) {
+        reponse.writeHead(303, { location: "/marchand/connexion" });
+        return reponse.end();
+      }
+
+      return envoyerHtml(
+        reponse,
+        200,
+        afficherConfigurationMarchand(await chargerConfigurationPourInterface(), {
+          enregistre: url.searchParams.get("enregistre") === "1",
+          retabli: url.searchParams.get("retabli") === "1",
+        })
+      );
+    }
+
+    if (requete.method === "POST" && url.pathname === "/marchand/configuration") {
+      if (!(await aAccesMarchand(requete, reponse))) {
+        reponse.writeHead(303, { location: "/marchand/connexion" });
+        return reponse.end();
+      }
+
+      const corps = await lireCorpsFormulaire(requete);
+      await enregistrerConfigurationApplication(corps);
+      reponse.writeHead(303, { location: "/marchand/configuration?enregistre=1" });
+      return reponse.end();
+    }
+
+    if (requete.method === "POST" && url.pathname === "/marchand/configuration/retablir-sandbox") {
+      if (!(await aAccesMarchand(requete, reponse))) {
+        reponse.writeHead(303, { location: "/marchand/connexion" });
+        return reponse.end();
+      }
+
+      await retablirConfigurationSandboxDocker();
+      reponse.writeHead(303, { location: "/marchand/configuration?retabli=1" });
+      return reponse.end();
+    }
+
     if (requete.method === "GET" && url.pathname.startsWith("/marchand/preuves/")) {
-      if (!aAccesMarchand(requete, reponse)) {
+      if (!(await aAccesMarchand(requete, reponse))) {
         return envoyerTexte(reponse, 401, "Cle marchand invalide.");
       }
 
@@ -471,9 +504,13 @@ const serveur = http.createServer(async (requete, reponse) => {
 });
 
 serveur.listen(port, () => {
-  console.log(`Paie Server demarre sur ${urlBase}`);
-  console.log(`Sante: ${urlBase}/api/sante`);
-  console.log(`Tableau marchand: ${urlBase}/marchand`);
+  const urlExposee = construireUrlLocaleExposee(process.env.PORT_PUBLIC_APPLICATION, port);
+  const urlOuverte = urlExposee || urlBase;
+
+  console.log(`Paie Server demarre dans le conteneur: http://localhost:${port}`);
+  console.log(`Adresse a ouvrir sur cette machine: ${urlOuverte}`);
+  console.log(`Sante: ${urlOuverte}/api/sante`);
+  console.log(`Tableau marchand: ${urlOuverte}/marchand`);
 });
 
 const minuteurNotificationsWebhook = setInterval(() => {
@@ -504,11 +541,12 @@ async function creerPaiement(corps, requete) {
     return { ok: false, message: "Demande invalide." };
   }
 
+  const configuration = await chargerConfigurationApplication();
   const montant = Number(corps.montant);
   const devise = String(corps.devise || "").trim().toUpperCase();
   const idCommande = String(corps.idCommande || "").trim();
   const idClient = String(corps.idClient || "").trim();
-  const origine = determinerOriginePaiement(requete);
+  const origine = determinerOriginePaiement(requete, configuration);
 
   if (!Number.isFinite(montant) || montant <= 0) {
     return { ok: false, message: "Le montant est obligatoire et doit etre positif." };
@@ -526,7 +564,7 @@ async function creerPaiement(corps, requete) {
     return { ok: false, message: "Identifiant client obligatoire." };
   }
 
-  const moyensPaiement = normaliserMoyensPaiement(corps.moyensPaiement);
+  const moyensPaiement = normaliserMoyensPaiement(corps.moyensPaiement, configuration);
 
   if (moyensPaiement.length === 0) {
     return { ok: false, message: "Aucun moyen de paiement disponible." };
@@ -575,7 +613,7 @@ async function creerPaiement(corps, requete) {
     modifieLe: maintenant,
   };
 
-  paiement.urlPaiement = `${urlBase}/paiement/${paiement.jetonClient}`;
+  paiement.urlPaiement = `${obtenirUrlBaseApplication(configuration)}/paiement/${paiement.jetonClient}`;
 
   await creerPaiementEnBase(paiement);
 
@@ -583,6 +621,7 @@ async function creerPaiement(corps, requete) {
 }
 
 async function envoyerPreuve(identifiantPaiement, corps) {
+  const configuration = await chargerConfigurationApplication();
   const paiements = await chargerPaiements();
   const paiement = paiements.find((element) => {
     return element.id === identifiantPaiement || element.jetonClient === identifiantPaiement;
@@ -659,6 +698,7 @@ async function envoyerPreuve(identifiantPaiement, corps) {
     referenceTransaction: referenceTransactionSysteme,
     montantVu,
     payeLe,
+    configuration,
   });
 
   const erreurControle = trouverErreurControlePreuve(verification);
@@ -1027,6 +1067,7 @@ function resumerWebhook(paiement) {
 }
 
 async function verifierPreuve(donnees) {
+  const configuration = donnees.configuration || {};
   const alertes = [];
   const alertesCritiques = [];
   const controles = [];
@@ -1076,8 +1117,8 @@ async function verifierPreuve(donnees) {
     ajouterControle(controles, alertes, alertesCritiques, pasAvantCreation, "date_trop_ancienne", "Date coherente", "Date trop ancienne par rapport a la creation du paiement.", false);
   }
 
-  const extractionTexte = await analyserImagePreuve(donnees.image, donnees.paiement, moyenSelectionne);
-  const ocrObligatoire = process.env.OCR_PREUVE_OBLIGATOIRE !== "false";
+  const extractionTexte = await analyserImagePreuve(donnees.image, donnees.paiement, moyenSelectionne, configuration);
+  const ocrObligatoire = booleenConfiguration(configuration, "OCR_PREUVE_OBLIGATOIRE", true);
   const ocrDisponible = !extractionTexte.erreur;
   const fraudeDetectee = (extractionTexte.indicesFraude || []).length === 0;
   const montantOcrLisible = !extractionTexte.active || extractionTexte.montantDetecte !== null;
@@ -1103,7 +1144,8 @@ async function verifierPreuve(donnees) {
     donnees.paiements,
     donnees.paiement.id,
     empreinteVisuelle,
-    extractionTexte
+    extractionTexte,
+    configuration
   );
   const referenceProviderDejaUtilisee = referenceProvider
     ? donnees.paiements.some((paiement) => {
@@ -1409,15 +1451,15 @@ function ajouterControle(controles, alertes, alertesCritiques, estValide, code, 
   ajouterAlerte(alertes, alertesCritiques, estValide, code, message, estCritique);
 }
 
-function trouverPreuveVisuelleProche(paiements, idPaiementCourant, empreinteCourante, extractionCourante) {
+function trouverPreuveVisuelleProche(paiements, idPaiementCourant, empreinteCourante, extractionCourante, configuration) {
   if (!empreinteCourante || !empreinteCourante.phash) {
     return null;
   }
 
-  const seuilPHash = lireNombreConfiguration("SEUIL_DISTANCE_PHASH", 8);
-  const seuilDHash = lireNombreConfiguration("SEUIL_DISTANCE_DHASH", 32);
-  const seuilAHash = lireNombreConfiguration("SEUIL_DISTANCE_AHASH", 38);
-  const seuilTexte = lireNombreConfiguration("SEUIL_SIMILARITE_TEXTE_PREUVE", 0.82);
+  const seuilPHash = nombreConfiguration(configuration, "SEUIL_DISTANCE_PHASH", 8);
+  const seuilDHash = nombreConfiguration(configuration, "SEUIL_DISTANCE_DHASH", 32);
+  const seuilAHash = nombreConfiguration(configuration, "SEUIL_DISTANCE_AHASH", 38);
+  const seuilTexte = nombreConfiguration(configuration, "SEUIL_SIMILARITE_TEXTE_PREUVE", 0.82);
 
   for (const paiement of paiements) {
     if (paiement.id === idPaiementCourant || !paiement.preuve) {
@@ -1549,12 +1591,6 @@ function normaliserTexteServeur(valeur) {
     .toLowerCase();
 }
 
-function lireNombreConfiguration(nom, defaut) {
-  const valeur = Number(process.env[nom]);
-
-  return Number.isFinite(valeur) ? valeur : defaut;
-}
-
 async function marquerPaiementEnAttente(paiement) {
   if (paiement.statut !== STATUTS_PAIEMENT.CREE) {
     return paiement;
@@ -1655,6 +1691,10 @@ async function traiterNotificationWebhook(idNotification) {
 
   const notification = resultat.rows[0];
 
+  const configuration = await chargerConfigurationApplication();
+  const maxTentativesWebhook = nombreConfiguration(configuration, "MAX_TENTATIVES_WEBHOOK", 5);
+  const delaiRetryWebhookSecondes = nombreConfiguration(configuration, "DELAI_RETRY_WEBHOOK_SECONDES", 60);
+
   if (notification.statut === "RECU" || Number(notification.tentatives) >= maxTentativesWebhook) {
     return notification;
   }
@@ -1733,6 +1773,8 @@ async function traiterNotificationWebhook(idNotification) {
 }
 
 async function traiterNotificationsEnAttente() {
+  const configuration = await chargerConfigurationApplication();
+  const maxTentativesWebhook = nombreConfiguration(configuration, "MAX_TENTATIVES_WEBHOOK", 5);
   const resultat = await executerRequete(
     `
       select id
@@ -1814,7 +1856,31 @@ function posterJson(urlCible, corps, entetes) {
   });
 }
 
-function normaliserMoyensPaiement(valeur) {
+function normaliserMoyensPaiement(valeur, configuration) {
+  const moyensPaiementParDefaut = [
+    {
+      code: "wave",
+      libelle: "Wave",
+      nomCompte: valeurConfiguration(configuration, "NOM_COMPTE_WAVE", "Nom du marchand"),
+      numeroCompte: valeurConfiguration(configuration, "NUMERO_COMPTE_WAVE", "+2250000000000"),
+      instructions: valeurConfiguration(
+        configuration,
+        "INSTRUCTIONS_COMPTE_WAVE",
+        "Envoyez le montant de la commande en couvrant les frais Wave."
+      ),
+    },
+    {
+      code: "orange_money",
+      libelle: "Orange Money",
+      nomCompte: valeurConfiguration(configuration, "NOM_COMPTE_ORANGE", "Nom du marchand"),
+      numeroCompte: valeurConfiguration(configuration, "NUMERO_COMPTE_ORANGE", "+2250000000000"),
+      instructions: valeurConfiguration(
+        configuration,
+        "INSTRUCTIONS_COMPTE_ORANGE",
+        "Envoyez le montant de la commande en couvrant les frais Orange Money."
+      ),
+    },
+  ];
   const moyens = Array.isArray(valeur) && valeur.length > 0 ? valeur : moyensPaiementParDefaut;
 
   return moyens
@@ -2070,12 +2136,15 @@ function convertirDateIso(valeur) {
   return new Date(valeur).toISOString();
 }
 
-function aAccesApplication(requete) {
-  return requete.headers["x-cle-api"] === cleApiApplication;
+async function aAccesApplication(requete) {
+  const configuration = await chargerConfigurationApplication();
+  const cleApiApplication = valeurConfiguration(configuration, "CLE_API_APPLICATION", "cle_application_dev");
+  return Boolean(cleApiApplication && requete.headers["x-cle-api"] === cleApiApplication);
 }
 
-function determinerOriginePaiement(requete) {
+function determinerOriginePaiement(requete, configuration) {
   const cleRequeteSandbox = String(requete && requete.headers["x-cle-origine-sandbox"] || "").trim();
+  const cleOrigineSandbox = valeurConfiguration(configuration, "CLE_ORIGINE_SANDBOX", "");
 
   if (cleOrigineSandbox && cleRequeteSandbox && cleRequeteSandbox === cleOrigineSandbox) {
     return "sandbox";
@@ -2096,8 +2165,11 @@ function origineDepuisMetadonnees(metadonnees) {
   return String(metadonnees.source || "").toLowerCase() === "sandbox" ? "sandbox" : "api_marchand";
 }
 
-function aAccesMarchand(requete, reponse) {
-  if (requete.headers["x-cle-marchand"] === cleMarchand) {
+async function aAccesMarchand(requete, reponse) {
+  const configuration = await chargerConfigurationApplication();
+  const cleMarchand = valeurConfiguration(configuration, "CLE_MARCHAND", "cle_marchand_dev");
+
+  if (cleMarchand && requete.headers["x-cle-marchand"] === cleMarchand) {
     return true;
   }
 
@@ -2610,6 +2682,17 @@ function construireUrlRetourAbandon(paiement) {
   }
 }
 
+function obtenirUrlBaseApplication(configuration) {
+  return normaliserUrlPublique(
+    valeurConfiguration(
+      configuration,
+      "URL_PUBLIQUE_APPLICATION",
+      process.env.URL_PUBLIQUE_APPLICATION || process.env.URL_BASE || ""
+    ),
+    port
+  );
+}
+
 function normaliserUrlPublique(valeur, portDefaut) {
   const texte = String(valeur || "").trim();
 
@@ -2722,4 +2805,14 @@ function envoyerImagePreuve(reponse, nomFichierStocke) {
 
   reponse.writeHead(200, { "content-type": typeMime });
   fs.createReadStream(cheminFichier).pipe(reponse);
+}
+
+function construireUrlLocaleExposee(portPublic, portInterne) {
+  const port = Number(portPublic);
+
+  if (!Number.isFinite(port) || port <= 0 || port === Number(portInterne)) {
+    return "";
+  }
+
+  return `http://localhost:${port}`;
 }

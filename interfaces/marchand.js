@@ -21,9 +21,12 @@ function afficherMarchand(paiements) {
             ${paiementsEnAttente.length} paiement(s) en attente du client
           </p>
         </div>
-        <form method="post" action="/marchand/deconnexion">
-          <button type="submit" class="bouton-secondaire">Deconnexion</button>
-        </form>
+        <div class="actions">
+          <a class="bouton-lien secondaire" href="/marchand/configuration">Configuration</a>
+          <form method="post" action="/marchand/deconnexion">
+            <button type="submit" class="bouton-secondaire">Deconnexion</button>
+          </form>
+        </div>
       </div>
       <p id="messageAction" class="retour-action" hidden></p>
       <section class="section-marchand">
