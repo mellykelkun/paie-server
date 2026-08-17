@@ -1,0 +1,7 @@
+**/node_modules/
+televersements/
+.env
+.env.sandbox
+bac-a-sable/donnees/
+.server.js.kate-swp
+fra.traineddata

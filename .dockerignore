@@ -1,0 +1,9 @@
+.git
+.env
+.env.sandbox
+node_modules
+televersements
+bac-a-sable/donnees
+fra.traineddata
+npm-debug.log
+.server.js.kate-swp

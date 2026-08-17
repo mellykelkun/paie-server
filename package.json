@@ -1,0 +1,38 @@
+{
+  "name": "paie-server",
+  "version": "1.0.0",
+  "description": "Serveur de paiement manuel self-hosted",
+  "main": "serveur.js",
+  "scripts": {
+    "start": "node serveur.js",
+    "dev": "nodemon serveur.js",
+    "migrer": "node scripts/migrer.js",
+    "nettoyer:donnees-test": "node scripts/nettoyer-donnees-test.js",
+    "nettoyer:sandbox": "node scripts/nettoyer-sandbox.js",
+    "sandbox": "node bac-a-sable/serveur-demo.js",
+    "dev:sandbox": "nodemon bac-a-sable/serveur-demo.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mellykelkun/paie-server.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/mellykelkun/paie-server/issues"
+  },
+  "homepage": "https://github.com/mellykelkun/paie-server#readme",
+  "dependencies": {
+    "@tesseract.js-data/fra": "^1.0.0",
+    "jpeg-js": "^0.4.4",
+    "pg": "^8.23.0",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
