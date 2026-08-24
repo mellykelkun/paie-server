@@ -92,7 +92,7 @@ const serveur = http.createServer(async (requete, reponse) => {
     const url = new URL(requete.url, urlBase);
 
     if (requete.method === "GET" && url.pathname === "/") {
-      return envoyerHtml(reponse, 200, afficherAccueil());
+      return envoyerHtml(reponse, 200, afficherAccueil(await chargerOptionsInterface()));
     }
 
     if (requete.method === "GET" && url.pathname === "/api/sante") {
@@ -162,7 +162,7 @@ const serveur = http.createServer(async (requete, reponse) => {
         return reponse.end();
       }
 
-      return envoyerHtml(reponse, 200, afficherEtapeCreationCompte(initialisation));
+      return envoyerHtml(reponse, 200, await afficherEtapeCreationCompte(initialisation));
     }
 
     if (requete.method === "POST" && url.pathname === "/marchand/initialisation/compte") {
@@ -182,7 +182,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       const erreurMotDePasse = validerMotDePasseInitialisation(corps.motDePasse, corps.confirmationMotDePasse);
 
       if (erreurMotDePasse) {
-        return envoyerHtml(reponse, 400, afficherEtapeCreationCompte(initialisation, erreurMotDePasse));
+        return envoyerHtml(reponse, 400, await afficherEtapeCreationCompte(initialisation, erreurMotDePasse));
       }
 
       await creerCompteMarchand(initialisation.identifiant, corps.motDePasse, initialisation.secret2fa);
@@ -204,7 +204,7 @@ const serveur = http.createServer(async (requete, reponse) => {
         return reponse.end();
       }
 
-      return envoyerHtml(reponse, 200, afficherConnexionMarchand());
+      return envoyerHtml(reponse, 200, afficherConnexionMarchand(await chargerOptionsInterface()));
     }
 
     if (requete.method === "POST" && url.pathname === "/marchand/connexion") {
@@ -216,10 +216,13 @@ const serveur = http.createServer(async (requete, reponse) => {
       const corps = await lireCorpsFormulaire(requete);
 
       if (!(await authentifierCompteMarchand(corps))) {
+        const optionsInterface = await chargerOptionsInterface();
+
         return envoyerHtml(
           reponse,
           401,
           afficherConnexionMarchand({
+            ...optionsInterface,
             erreur: "Identifiant ou authentification invalide.",
           })
         );
@@ -347,9 +350,10 @@ const serveur = http.createServer(async (requete, reponse) => {
     if (requete.method === "GET" && url.pathname.match(/^\/paiement\/[^/]+\/preuve-envoyee$/)) {
       const identifiantPaiement = url.pathname.split("/")[2];
       const paiement = await trouverPaiementParAccesPublic(identifiantPaiement);
+      const optionsInterface = await chargerOptionsInterface();
 
       if (!paiement) {
-        return envoyerHtml(reponse, 404, afficherMessage("Paiement introuvable"));
+        return envoyerHtml(reponse, 404, afficherMessage("Paiement introuvable", optionsInterface));
       }
 
       if (!paiement.preuve) {
@@ -357,34 +361,43 @@ const serveur = http.createServer(async (requete, reponse) => {
         return reponse.end();
       }
 
-      return envoyerHtml(reponse, 200, afficherPreuveEnvoyee(paiement));
+      return envoyerHtml(
+        reponse,
+        200,
+        afficherPreuveEnvoyee(paiement, {
+          ...optionsInterface,
+          urlRetourClient: construireUrlRetourClient(paiement, "preuve-envoyee"),
+        })
+      );
     }
 
     if (requete.method === "GET" && url.pathname.match(/^\/paiement\/[^/]+\/echec-envoi$/)) {
       const identifiantPaiement = url.pathname.split("/")[2];
       const paiement = await trouverPaiementParAccesPublic(identifiantPaiement);
+      const optionsInterface = await chargerOptionsInterface();
 
       if (!paiement) {
-        return envoyerHtml(reponse, 404, afficherMessage("Paiement introuvable"));
+        return envoyerHtml(reponse, 404, afficherMessage("Paiement introuvable", optionsInterface));
       }
 
       return envoyerHtml(
         reponse,
         200,
-        afficherEchecEnvoi(paiement, url.searchParams.get("message"), url.searchParams.get("code"))
+        afficherEchecEnvoi(paiement, url.searchParams.get("message"), url.searchParams.get("code"), optionsInterface)
       );
     }
 
     if (requete.method === "POST" && url.pathname.match(/^\/paiement\/[^/]+\/abandonner$/)) {
       const identifiantPaiement = url.pathname.split("/")[2];
       const resultat = await abandonnerPaiement(identifiantPaiement);
+      const optionsInterface = await chargerOptionsInterface();
 
       if (!resultat.ok) {
-        return envoyerHtml(reponse, resultat.codeHttp || 400, afficherMessage(resultat.message));
+        return envoyerHtml(reponse, resultat.codeHttp || 400, afficherMessage(resultat.message, optionsInterface));
       }
 
       if (!resultat.urlRedirection) {
-        return envoyerHtml(reponse, 200, afficherMessage("Paiement abandonne"));
+        return envoyerHtml(reponse, 200, afficherMessage("Paiement abandonne", optionsInterface));
       }
 
       reponse.writeHead(303, { location: resultat.urlRedirection });
@@ -394,9 +407,10 @@ const serveur = http.createServer(async (requete, reponse) => {
     if (requete.method === "GET" && url.pathname.startsWith("/paiement/")) {
       const identifiantPaiement = url.pathname.split("/")[2];
       const paiement = await trouverPaiementParAccesPublic(identifiantPaiement);
+      const optionsInterface = await chargerOptionsInterface();
 
       if (!paiement) {
-        return envoyerHtml(reponse, 404, afficherMessage("Paiement introuvable"));
+        return envoyerHtml(reponse, 404, afficherMessage("Paiement introuvable", optionsInterface));
       }
 
       if (paiement.preuve) {
@@ -409,14 +423,15 @@ const serveur = http.createServer(async (requete, reponse) => {
           reponse,
           410,
           afficherMessage("Ce paiement n'est plus actif", {
-            urlRetour: construireUrlRetourAbandon(paiement),
+            ...optionsInterface,
+            urlRetour: construireUrlRetourClient(paiement, "envoi-abandonne"),
             libelleRetour: "OK",
           })
         );
       }
 
       const paiementMisAJour = await marquerPaiementEnAttente(paiement);
-      return envoyerHtml(reponse, 200, afficherPaiement(paiementMisAJour));
+      return envoyerHtml(reponse, 200, afficherPaiement(paiementMisAJour, optionsInterface));
     }
 
     if (requete.method === "GET" && url.pathname === "/marchand") {
@@ -433,7 +448,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       return envoyerHtml(
         reponse,
         200,
-        afficherMarchand(await chargerPaiements())
+        afficherMarchand(await chargerPaiements(), await chargerOptionsInterface())
       );
     }
 
@@ -448,10 +463,14 @@ const serveur = http.createServer(async (requete, reponse) => {
         return reponse.end();
       }
 
+      const champsConfiguration = await chargerConfigurationPourInterface();
+      const optionsInterface = optionsInterfaceDepuisChamps(champsConfiguration);
+
       return envoyerHtml(
         reponse,
         200,
-        afficherConfigurationMarchand(await chargerConfigurationPourInterface(), {
+        afficherConfigurationMarchand(champsConfiguration, {
+          ...optionsInterface,
           enregistre: url.searchParams.get("enregistre") === "1",
           retabli: url.searchParams.get("retabli") === "1",
         })
@@ -534,6 +553,27 @@ function arreterServeur() {
     await fermerBase();
     process.exit(0);
   });
+}
+
+async function chargerOptionsInterface() {
+  const configuration = await chargerConfigurationApplication();
+  return optionsInterfaceDepuisConfiguration(configuration);
+}
+
+function optionsInterfaceDepuisConfiguration(configuration) {
+  return {
+    themeInterface: valeurConfiguration(configuration, "THEME_INTERFACE", "paie_clair"),
+  };
+}
+
+function optionsInterfaceDepuisChamps(champs) {
+  const champTheme = Array.isArray(champs)
+    ? champs.find((champ) => champ.cle === "THEME_INTERFACE")
+    : null;
+
+  return {
+    themeInterface: champTheme ? champTheme.valeur : "paie_clair",
+  };
 }
 
 async function creerPaiement(corps, requete) {
@@ -784,7 +824,7 @@ async function abandonnerPaiement(identifiantPaiement) {
   if (paiement.statut === STATUTS_PAIEMENT.PAYE || paiement.statut === STATUTS_PAIEMENT.REFUSE) {
     return {
       ok: true,
-      urlRedirection: construireUrlRetourAbandon(paiement),
+      urlRedirection: construireUrlRetourClient(paiement, "envoi-abandonne"),
     };
   }
 
@@ -803,7 +843,7 @@ async function abandonnerPaiement(identifiantPaiement) {
 
   return {
     ok: true,
-    urlRedirection: construireUrlRetourAbandon(paiement),
+    urlRedirection: construireUrlRetourClient(paiement, "envoi-abandonne"),
   };
 }
 
@@ -2264,6 +2304,7 @@ function verifierMotDePasse(motDePasse, hashStocke) {
 
 async function afficherEtapeInitialisation2fa(requete, reponse, erreur) {
   const initialisation = obtenirOuCreerInitialisationMarchand(requete, reponse);
+  const optionsInterface = await chargerOptionsInterface();
   const uri = creerUriTotp(initialisation);
   const qrCodeDataUrl = await QRCode.toDataURL(uri, {
     margin: 1,
@@ -2275,6 +2316,7 @@ async function afficherEtapeInitialisation2fa(requete, reponse, erreur) {
   });
 
   return afficherInitialisationMarchand({
+    ...optionsInterface,
     etape: "2fa",
     qrCodeDataUrl,
     secret2fa: initialisation.secret2fa,
@@ -2283,8 +2325,11 @@ async function afficherEtapeInitialisation2fa(requete, reponse, erreur) {
   });
 }
 
-function afficherEtapeCreationCompte(initialisation, erreur) {
+async function afficherEtapeCreationCompte(initialisation, erreur) {
+  const optionsInterface = await chargerOptionsInterface();
+
   return afficherInitialisationMarchand({
+    ...optionsInterface,
     etape: "compte",
     identifiant: initialisation.identifiant,
     erreur,
@@ -2565,8 +2610,8 @@ function nettoyerUrl(valeur) {
 function validerUrlsPaiement(corps) {
   const urlSucces = validerUrlMarchand(corps.urlSucces, "urlSucces");
   const urlAnnulation = validerUrlMarchand(corps.urlAnnulation, "urlAnnulation");
-  const urlRetour = validerUrlMarchand(corps.urlRetour, "urlRetour");
-  const urlWebhook = validerUrlMarchand(corps.urlWebhook, "urlWebhook");
+  const urlRetour = validerUrlMarchand(corps.urlRetour, "urlRetour", true);
+  const urlWebhook = validerUrlMarchand(corps.urlWebhook, "urlWebhook", true);
   const urls = [urlSucces, urlAnnulation, urlRetour, urlWebhook];
   const invalide = urls.find((element) => !element.ok);
 
@@ -2594,11 +2639,13 @@ function validerUrlsPaiement(corps) {
   };
 }
 
-function validerUrlMarchand(valeur, nomChamp) {
+function validerUrlMarchand(valeur, nomChamp, obligatoire = false) {
   const texte = String(valeur || "").trim();
 
   if (!texte) {
-    return { ok: true, url: "" };
+    return obligatoire
+      ? { ok: false, message: `${nomChamp} est obligatoire.` }
+      : { ok: true, url: "" };
   }
 
   let url;
@@ -2659,18 +2706,18 @@ function hostnameLocalOuPrive(hostname) {
   return false;
 }
 
-function construireUrlRetourAbandon(paiement) {
-  if (paiement.urlAnnulation) {
-    return paiement.urlAnnulation;
-  }
+function construireUrlRetourClient(paiement, etatRetour) {
+  const urlBaseRetour = etatRetour === "envoi-abandonne" && paiement.urlAnnulation
+    ? paiement.urlAnnulation
+    : paiement.urlRetour;
 
-  if (!paiement.urlRetour) {
+  if (!urlBaseRetour) {
     return "";
   }
 
   try {
-    const url = new URL(paiement.urlRetour);
-    url.searchParams.set("retour", "envoi-abandonne");
+    const url = new URL(urlBaseRetour);
+    url.searchParams.set("retour", etatRetour);
 
     if (paiement.idCommande) {
       url.searchParams.set("commande", paiement.idCommande);
@@ -2678,7 +2725,7 @@ function construireUrlRetourAbandon(paiement) {
 
     return url.toString();
   } catch {
-    return paiement.urlRetour;
+    return urlBaseRetour;
   }
 }
 

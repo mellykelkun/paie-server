@@ -1,7 +1,7 @@
 const { pageHtml, echapperHtml } = require("./commun");
 
-function afficherPreuveEnvoyee(paiement) {
-  const urlRetour = paiement.urlRetour || "";
+function afficherPreuveEnvoyee(paiement, options = {}) {
+  const urlRetour = options.urlRetourClient || paiement.urlRetour || "";
   const boutonRetour = urlRetour
     ? `<a class="bouton-lien" href="${echapperHtml(urlRetour)}">Retour a l'application</a>`
     : "";
@@ -27,10 +27,10 @@ function afficherPreuveEnvoyee(paiement) {
     </main>
 
     ${redirection}
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
-function afficherEchecEnvoi(paiement, message, code) {
+function afficherEchecEnvoi(paiement, message, code, options = {}) {
   const jetonPaiement = paiement.jetonClient || paiement.jetonPaiement || paiement.id;
   const urlRelance = `/paiement/${encodeURIComponent(jetonPaiement)}`;
   const aUrlRetour = Boolean(paiement.urlAnnulation || paiement.urlRetour);
@@ -58,7 +58,7 @@ function afficherEchecEnvoi(paiement, message, code) {
         </div>
       </section>
     </main>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 function conseilEchec(code) {

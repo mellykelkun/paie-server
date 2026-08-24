@@ -186,9 +186,10 @@ PAIE_SERVER_DEVISE=XOF
 PAIE_SERVER_ID_CLIENT_DEFAUT=client_invite
 PAIE_SERVER_MODE=production
 PAIE_SERVER_URL_RETOUR=https://votre-site.com/paiement/retour
-PAIE_SERVER_URL_ANNULATION=https://votre-site.com/paiement/annule
 PAIE_SERVER_URL_WEBHOOK=https://votre-site.com/webhook/paie-server
 PAIE_SERVER_SECRET_WEBHOOK=un_secret_long_choisi_par_le_site_marchand
+# Optionnel: page separee si vous ne voulez pas reutiliser PAIE_SERVER_URL_RETOUR pour les abandons.
+PAIE_SERVER_URL_ANNULATION=
 ```
 
 Explication simple:
@@ -198,9 +199,9 @@ Explication simple:
 - `PAIE_SERVER_DEVISE`: devise par defaut, par exemple `XOF`.
 - `PAIE_SERVER_ID_CLIENT_DEFAUT`: identifiant du client final si votre site n'a pas encore de compte client. Ce n'est pas l'identifiant du site marchand.
 - `PAIE_SERVER_MODE`: `production` pour le vrai service, `sandbox` ou `test` pour vos essais si votre integration le prevoit.
-- `PAIE_SERVER_URL_RETOUR`: page ou le client revient apres avoir envoye son recu.
-- `PAIE_SERVER_URL_ANNULATION`: page ou le client revient s'il abandonne le paiement.
-- `PAIE_SERVER_URL_WEBHOOK`: adresse serveur que Paie Server appelle apres acceptation ou refus.
+- `PAIE_SERVER_URL_RETOUR`: page obligatoire ou le client revient apres avoir envoye son recu ou abandonne. Paie Server ajoute `retour=preuve-envoyee` ou `retour=envoi-abandonne`.
+- `PAIE_SERVER_URL_ANNULATION`: optionnel. Si vide, Paie Server reutilise `PAIE_SERVER_URL_RETOUR` et ajoute `retour=envoi-abandonne`.
+- `PAIE_SERVER_URL_WEBHOOK`: adresse serveur obligatoire que Paie Server appelle apres acceptation ou refus.
 - `PAIE_SERVER_SECRET_WEBHOOK`: secret partage entre votre site et Paie Server pour verifier que la notification vient bien de Paie Server.
 
 Pour creer un paiement, le site marchand appelle:
@@ -210,7 +211,16 @@ POST /api/paiements
 Header: x-cle-api
 ```
 
-Le corps contient au minimum:
+Le corps contient au minimum ces champs. `urlRetour` et `urlWebhook` ne sont pas optionnels: sans eux, Paie Server refuse la creation du paiement. `urlAnnulation` est optionnelle; si elle est absente, Paie Server renvoie le client vers `urlRetour`.
+
+Paie Server ajoute automatiquement un etat au retour navigateur:
+
+```txt
+urlRetour?retour=preuve-envoyee&commande=commande_123
+urlRetour?retour=envoi-abandonne&commande=commande_123
+```
+
+Ces retours servent seulement a afficher un message cote site marchand. L'etat final metier reste le webhook.
 
 ```json
 {
@@ -219,7 +229,6 @@ Le corps contient au minimum:
   "montant": 10000,
   "devise": "XOF",
   "urlRetour": "https://votre-site.com/paiement/retour",
-  "urlAnnulation": "https://votre-site.com/paiement/annule",
   "urlWebhook": "https://votre-site.com/webhook/paie-server",
   "secretWebhook": "un_secret_long"
 }

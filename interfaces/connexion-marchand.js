@@ -65,7 +65,7 @@ function afficherConnexionMarchand(options = {}) {
         inputCode2fa.required = utiliseCode2fa;
       }
     </script>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 module.exports = afficherConnexionMarchand;

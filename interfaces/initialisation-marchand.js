@@ -41,7 +41,7 @@ function afficherActivation2fa(options) {
         </form>
       </section>
     </main>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 function afficherCreationCompte(options) {
@@ -72,7 +72,7 @@ function afficherCreationCompte(options) {
         </form>
       </section>
     </main>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 function afficherErreur(message) {

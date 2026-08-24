@@ -1,4 +1,8 @@
 const { executerRequete } = require("./base-de-donnees");
+const {
+  OPTIONS_THEME_INTERFACE,
+  valeurThemeInterface,
+} = require("./interfaces/themes");
 
 const DEFINITIONS_CONFIGURATION = [
   {
@@ -66,10 +70,22 @@ const DEFINITIONS_CONFIGURATION = [
     cle: "URL_PUBLIQUE_APPLICATION",
     libelle: "URL publique de Paie Server",
     type: "url",
+    obligatoire: true,
     defaut: "http://localhost:7821",
     description: "Adresse que le client et le site marchand doivent pouvoir ouvrir pour arriver sur Paie Server.",
     exemple: "https://pay.votre-domaine.com",
     scenario: "En Docker local, utilisez http://localhost:7821: c'est le port visible sur votre machine. En production, mettez le vrai domaine public, par exemple https://pay.votre-domaine.com. Ne mettez pas http://paie-server-application:3000 ici: cette adresse est reservee aux conteneurs Docker.",
+  },
+  {
+    section: "Apparence",
+    cle: "THEME_INTERFACE",
+    libelle: "Theme global de l'interface",
+    type: "select",
+    defaut: "paie_clair",
+    options: OPTIONS_THEME_INTERFACE,
+    description: "Theme visuel applique a Paie Server, au parcours client, au tableau marchand, a la configuration et au sandbox.",
+    exemple: "paie_clair",
+    scenario: "Choisissez le theme qui s'accorde le mieux avec votre site ou votre application. Le client ne choisit rien: ce reglage marchand s'applique partout.",
   },
   {
     section: "Acces API",
@@ -237,6 +253,7 @@ const DEFINITIONS_CONFIGURATION = [
     cle: "URL_SANDBOX_PUBLIC",
     libelle: "Adresse du site de test dans le navigateur",
     type: "url",
+    obligatoire: true,
     defaut: "http://localhost:7822",
     description: "Adresse a ouvrir dans votre navigateur pour utiliser le site de demonstration.",
     exemple: "http://localhost:7822",
@@ -247,6 +264,7 @@ const DEFINITIONS_CONFIGURATION = [
     cle: "URL_API_PAIEMENT_INTERNE",
     libelle: "Adresse que le site de test utilise pour joindre Paie Server",
     type: "url",
+    obligatoire: true,
     defaut: "http://paie-server-application:3000",
     description: "Adresse utilisee par le sandbox pour demander a Paie Server de creer un paiement.",
     exemple: "http://paie-server-application:3000",
@@ -268,6 +286,7 @@ const DEFINITIONS_CONFIGURATION = [
     cle: "URL_SANDBOX_WEBHOOK",
     libelle: "Adresse ou Paie Server notifie le site de test",
     type: "url",
+    obligatoire: true,
     defaut: "http://paie-server-sandbox:4000/webhook/paiement",
     description: "Adresse appelee par Paie Server apres acceptation ou refus du paiement.",
     exemple: "http://paie-server-sandbox:4000/webhook/paiement",
@@ -535,6 +554,22 @@ function valeurEnv(definition, defaut) {
 }
 
 function normaliserValeur(definition, valeur) {
+  if (definition.obligatoire && !String(valeur || "").trim()) {
+    return String(definition.defaut || "");
+  }
+
+  if (definition.cle === "THEME_INTERFACE") {
+    return valeurThemeInterface(valeur);
+  }
+
+  if (definition.type === "select") {
+    const options = Array.isArray(definition.options) ? definition.options : [];
+    const valeurNormalisee = String(valeur || "").trim();
+    const optionExiste = options.some((option) => option.valeur === valeurNormalisee);
+
+    return optionExiste ? valeurNormalisee : String(definition.defaut || "");
+  }
+
   if (definition.type !== "number") {
     return valeur;
   }

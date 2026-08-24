@@ -12,7 +12,7 @@ function afficherMessage(message, options = {}) {
       <h1>${echapperHtml(message)}</h1>
       ${actionRetour}
     </main>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 module.exports = afficherMessage;

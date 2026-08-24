@@ -1,48 +1,107 @@
 const { pageHtml, echapperHtml, formaterMontant } = require("./commun");
 
-function afficherMarchand(paiements) {
+function afficherMarchand(paiements, options = {}) {
   const paiementsTries = [...paiements].sort((a, b) => b.creeLe.localeCompare(a.creeLe));
+  const paiementsFinalises = paiementsTries.filter((paiement) => {
+    return paiement.statut === "PAYE" || paiement.statut === "REFUSE";
+  });
   const paiementsAbandonnes = paiementsTries.filter((paiement) => paiement.statut === "ABANDONNE");
-  const paiementsAControler = paiementsTries.filter((paiement) => Boolean(paiement.preuve && paiement.verification));
+  const paiementsAControler = paiementsTries.filter((paiement) => {
+    return Boolean(
+      paiement.preuve &&
+      paiement.verification &&
+      paiement.statut !== "PAYE" &&
+      paiement.statut !== "REFUSE" &&
+      paiement.statut !== "ABANDONNE"
+    );
+  });
   const paiementsEnAttente = paiementsTries.filter((paiement) => {
-    return paiement.statut !== "ABANDONNE" && (!paiement.preuve || !paiement.verification);
+    return (
+      paiement.statut !== "ABANDONNE" &&
+      paiement.statut !== "PAYE" &&
+      paiement.statut !== "REFUSE" &&
+      (!paiement.preuve || !paiement.verification)
+    );
   });
   const lignesAControler = paiementsAControler.map(afficherLignePaiement).join("");
   const lignesEnAttente = paiementsEnAttente.map(afficherLignePaiement).join("");
+  const lignesFinalisees = paiementsFinalises.map(afficherLignePaiement).join("");
   const lignesAbandonnees = paiementsAbandonnes.map(afficherLignePaiement).join("");
+  const statistiques = construireStatistiquesMarchand({
+    paiements: paiementsTries,
+    paiementsAControler,
+    paiementsEnAttente,
+    paiementsFinalises,
+    paiementsAbandonnes,
+  });
 
   return pageHtml("Tableau marchand", `
-    <main>
-      <div class="titre-ligne">
+    <main class="tableau-marchand">
+      <header class="entete-marchand">
         <div>
+          <p class="sur-titre">Espace marchand</p>
           <h1>Tableau marchand</h1>
-          <p>
-            ${paiementsAControler.length} justificatif(s) a controler -
-            ${paiementsEnAttente.length} paiement(s) en attente du client
-          </p>
+          <p>Suivi rapide des paiements manuels, justificatifs, decisions et notifications.</p>
         </div>
-        <div class="actions">
+        <div class="actions actions-entete-marchand">
           <a class="bouton-lien secondaire" href="/marchand/configuration">Configuration</a>
           <form method="post" action="/marchand/deconnexion">
             <button type="submit" class="bouton-secondaire">Deconnexion</button>
           </form>
         </div>
-      </div>
-      <p id="messageAction" class="retour-action" hidden></p>
-      <section class="section-marchand">
-        <h2>Justificatifs a controler</h2>
-        <p class="description-section">Paiements pour lesquels le client a envoye un recu. Verifiez votre compte de paiement, puis acceptez ou refusez.</p>
-        ${lignesAControler || "<p>Aucun justificatif a controler.</p>"}
+      </header>
+
+      <section class="resume-marchand" aria-label="Resume marchand">
+        ${statistiques.map(afficherCarteStatistique).join("")}
       </section>
-      <details class="section-marchand">
-        <summary>Paiements en attente du justificatif (${paiementsEnAttente.length})</summary>
+
+      <p id="messageAction" class="retour-action" hidden></p>
+
+      <section class="section-marchand section-prioritaire">
+        <div class="entete-section-marchand">
+          <div>
+            <p class="sur-titre">Priorite</p>
+            <h2>Justificatifs a controler</h2>
+          </div>
+          ${afficherCompteurSection(paiementsAControler.length)}
+        </div>
+        <p class="description-section">Paiements avec recu recu. Verifiez votre compte de paiement, puis acceptez ou refusez.</p>
+        <div class="liste-paiements-marchand">
+          ${lignesAControler || afficherEtatVide("Aucun justificatif a controler", "Les nouvelles preuves apparaitront ici des leur reception.")}
+        </div>
+      </section>
+
+      <details class="section-marchand" ${paiementsAControler.length === 0 ? "open" : ""}>
+        <summary>
+          <span>Paiements en attente du justificatif</span>
+          ${afficherCompteurSection(paiementsEnAttente.length)}
+        </summary>
         <p class="description-section">Paiements crees ou ouverts par le client, mais sans recu valide envoye. Aucune decision marchand n'est attendue ici.</p>
-        ${lignesEnAttente || "<p>Aucun paiement en attente.</p>"}
+        <div class="liste-paiements-marchand">
+          ${lignesEnAttente || afficherEtatVide("Aucun paiement en attente", "Les paiements sans preuve seront regroupes ici.")}
+        </div>
       </details>
+
       <details class="section-marchand">
-        <summary>Paiements abandonnes (${paiementsAbandonnes.length})</summary>
+        <summary>
+          <span>Decisions finales</span>
+          ${afficherCompteurSection(paiementsFinalises.length)}
+        </summary>
+        <p class="description-section">Paiements deja acceptes ou refuses. Les notifications peuvent etre renvoyees si le site marchand ne les a pas recues.</p>
+        <div class="liste-paiements-marchand">
+          ${lignesFinalisees || afficherEtatVide("Aucune decision finale", "Les paiements acceptes ou refuses apparaitront ici.")}
+        </div>
+      </details>
+
+      <details class="section-marchand">
+        <summary>
+          <span>Paiements abandonnes</span>
+          ${afficherCompteurSection(paiementsAbandonnes.length)}
+        </summary>
         <p class="description-section">Paiements arretes avant reception d'un justificatif valide, souvent apres annulation ou retour du client vers l'application marchande.</p>
-        ${lignesAbandonnees || "<p>Aucun paiement abandonne.</p>"}
+        <div class="liste-paiements-marchand">
+          ${lignesAbandonnees || afficherEtatVide("Aucun paiement abandonne", "Les abandons client seront archives dans cette section.")}
+        </div>
       </details>
     </main>
 
@@ -308,18 +367,115 @@ function afficherMarchand(paiements) {
         }
       }
     </script>
-  `);
+  `, { themeInterface: options.themeInterface });
+}
+
+function construireStatistiquesMarchand(donnees) {
+  const notificationsEnEchec = donnees.paiements.filter((paiement) => {
+    const statut = paiement.dernierWebhook && paiement.dernierWebhook.statut;
+    return statut === "ECHEC_HTTP" || statut === "ECHEC_ENVOI";
+  });
+  const paiementsPayes = donnees.paiementsFinalises.filter((paiement) => paiement.statut === "PAYE");
+  const paiementsRefuses = donnees.paiementsFinalises.filter((paiement) => paiement.statut === "REFUSE");
+
+  return [
+    {
+      libelle: "A controler",
+      valeur: donnees.paiementsAControler.length,
+      detail: "preuve recue",
+      classe: donnees.paiementsAControler.length > 0 ? "attente" : "neutre",
+    },
+    {
+      libelle: "En attente",
+      valeur: donnees.paiementsEnAttente.length,
+      detail: "cote client",
+      classe: "neutre",
+    },
+    {
+      libelle: "Acceptes",
+      valeur: paiementsPayes.length,
+      detail: resumerMontantsPayes(paiementsPayes),
+      classe: "succes",
+    },
+    {
+      libelle: "Refuses",
+      valeur: paiementsRefuses.length,
+      detail: `${donnees.paiementsAbandonnes.length} abandonne(s)`,
+      classe: paiementsRefuses.length > 0 ? "erreur" : "neutre",
+    },
+    {
+      libelle: "Notifications",
+      valeur: notificationsEnEchec.length,
+      detail: notificationsEnEchec.length > 0 ? "a surveiller" : "aucun echec",
+      classe: notificationsEnEchec.length > 0 ? "erreur" : "succes",
+    },
+  ];
+}
+
+function afficherCarteStatistique(statistique) {
+  return `
+    <article class="carte-statistique ${echapperHtml(statistique.classe)}">
+      <span>${echapperHtml(statistique.libelle)}</span>
+      <strong>${echapperHtml(statistique.valeur)}</strong>
+      <small>${echapperHtml(statistique.detail)}</small>
+    </article>
+  `;
+}
+
+function resumerMontantsPayes(paiementsPayes) {
+  const totaux = new Map();
+
+  for (const paiement of paiementsPayes) {
+    const devise = paiement.devise || "";
+    totaux.set(devise, (totaux.get(devise) || 0) + Number(paiement.montant || 0));
+  }
+
+  if (totaux.size === 0) {
+    return "0 encaisse";
+  }
+
+  const morceaux = Array.from(totaux.entries())
+    .slice(0, 2)
+    .map(([devise, montant]) => formaterMontant(montant, devise));
+  const suffixe = totaux.size > 2 ? " +" : "";
+
+  return `${morceaux.join(" + ")}${suffixe}`;
+}
+
+function afficherCompteurSection(nombre) {
+  return `<span class="compteur-section">${Number(nombre) || 0}</span>`;
+}
+
+function afficherEtatVide(titre, description) {
+  return `
+    <div class="etat-vide-marchand">
+      <strong>${echapperHtml(titre)}</strong>
+      <p>${echapperHtml(description)}</p>
+    </div>
+  `;
 }
 
 function afficherLignePaiement(paiement) {
+  const alertesVerification = paiement.verification && Array.isArray(paiement.verification.alertes)
+    ? paiement.verification.alertes
+    : [];
   const alertes = paiement.verification
-    ? paiement.verification.alertes.map(afficherAlerte).join("")
-    : "<li>Aucun justificatif recu.</li>";
+    ? afficherAlertes(alertesVerification)
+    : `<p class="note-paiement-marchand">Aucun justificatif recu.</p>`;
   const controles = paiement.verification ? afficherControles(paiement.verification) : "";
   const extractionTexte = paiement.verification ? afficherExtractionTexte(paiement.verification.extractionTexte) : "";
   const imagePreuve = paiement.preuve
-    ? `<img src="/marchand/preuves/${echapperHtml(paiement.preuve.nomFichierStocke)}" alt="Justificatif de paiement">`
-    : "";
+    ? `
+      <a class="apercu-preuve-marchand" href="/marchand/preuves/${echapperHtml(paiement.preuve.nomFichierStocke)}" target="_blank" rel="noopener">
+        <img src="/marchand/preuves/${echapperHtml(paiement.preuve.nomFichierStocke)}" alt="Justificatif de paiement">
+        <span>Ouvrir la preuve</span>
+      </a>
+    `
+    : `
+      <div class="apercu-preuve-marchand vide">
+        <span>Aucune preuve</span>
+      </div>
+    `;
   const decisionFinale = paiement.statut === "PAYE" || paiement.statut === "REFUSE";
   const preuveEnvoyee = Boolean(paiement.preuve && paiement.verification);
   const peutAccepter = !decisionFinale && preuveEnvoyee && paiement.verification.peutAccepter;
@@ -330,27 +486,64 @@ function afficherLignePaiement(paiement) {
   const webhook = afficherWebhook(paiement);
   const origine = afficherOrigine(paiement.origine);
   const metadonnees = afficherMetadonnees(paiement.metadonnees);
+  const score = paiement.verification ? paiement.verification.score : "-";
+  const referencePreuve = paiement.preuve ? paiement.preuve.referenceTransaction : "-";
+  const moyenPaiement = paiement.moyenChoisi || "-";
+  const dateCreation = formaterDate(paiement.creeLe);
+  const dateModification = formaterDate(paiement.modifieLe);
   const peutRenvoyerNotification =
     decisionFinale &&
     Boolean(paiement.urlWebhook) &&
     (!paiement.dernierWebhook || paiement.dernierWebhook.statut !== "RECU");
 
   return `
-    <article class="paiement">
-      <div>
-        <h2>${echapperHtml(paiement.id)}</h2>
-        <p>${formaterMontant(paiement.montant, paiement.devise)} - ${echapperHtml(paiement.statut)}</p>
-        ${origine}
-        <p>Commande: ${echapperHtml(paiement.idCommande)} | Client: ${echapperHtml(paiement.idClient)}</p>
+    <article class="paiement-marchand ${classePaiement(paiement)}">
+      <div class="paiement-marchand-corps">
+        <div class="paiement-marchand-entete">
+          <div>
+            <p class="sur-titre-paiement">${echapperHtml(paiement.id)}</p>
+            <h3>${formaterMontant(paiement.montant, paiement.devise)}</h3>
+          </div>
+          ${afficherPastilleStatut(paiement.statut)}
+        </div>
+
+        <dl class="infos-paiement-marchand">
+          <div>
+            <dt>Commande</dt>
+            <dd>${echapperHtml(paiement.idCommande)}</dd>
+          </div>
+          <div>
+            <dt>Client</dt>
+            <dd>${echapperHtml(paiement.idClient)}</dd>
+          </div>
+          <div>
+            <dt>Moyen</dt>
+            <dd>${echapperHtml(moyenPaiement)}</dd>
+          </div>
+          <div>
+            <dt>Reference preuve</dt>
+            <dd>${echapperHtml(referencePreuve)}</dd>
+          </div>
+          <div>
+            <dt>Score controle</dt>
+            <dd>${echapperHtml(score)}</dd>
+          </div>
+          <div>
+            <dt>Dates</dt>
+            <dd>Cree ${echapperHtml(dateCreation)} - maj ${echapperHtml(dateModification)}</dd>
+          </div>
+        </dl>
+
+        <div class="ligne-etats-marchand">
+          ${origine}
+          ${decision}
+        </div>
         ${metadonnees}
-        <p>Reference paiement: ${echapperHtml(paiement.preuve ? paiement.preuve.referenceTransaction : "-")}</p>
-        <p>Score de controle: ${paiement.verification ? paiement.verification.score : "-"}</p>
-        ${decision}
         ${webhook}
-        <ul>${alertes}</ul>
+        ${alertes}
         ${controles}
         ${extractionTexte}
-        <div class="actions">
+        <div class="actions actions-paiement-marchand">
           <button
             type="button"
             data-action-decision="accepter"
@@ -377,9 +570,58 @@ function afficherLignePaiement(paiement) {
   `;
 }
 
+function classePaiement(paiement) {
+  if (paiement.statut === "PAYE") {
+    return "paiement-succes";
+  }
+
+  if (paiement.statut === "REFUSE") {
+    return "paiement-erreur";
+  }
+
+  if (paiement.statut === "ABANDONNE") {
+    return "paiement-neutre";
+  }
+
+  if (paiement.preuve && paiement.verification) {
+    return "paiement-attente";
+  }
+
+  return "paiement-neutre";
+}
+
+function afficherPastilleStatut(statut) {
+  const statuts = {
+    CREE: { libelle: "Cree", classe: "neutre" },
+    EN_ATTENTE_PAIEMENT: { libelle: "En attente client", classe: "attente" },
+    PREUVE_ENVOYEE: { libelle: "Preuve recue", classe: "attente" },
+    EN_VERIFICATION: { libelle: "A verifier", classe: "attente" },
+    PAYE: { libelle: "Accepte", classe: "succes" },
+    REFUSE: { libelle: "Refuse", classe: "erreur" },
+    ABANDONNE: { libelle: "Abandonne", classe: "neutre" },
+  };
+  const details = statuts[statut] || { libelle: statut || "Inconnu", classe: "neutre" };
+
+  return `<span class="pastille-statut ${echapperHtml(details.classe)}">${echapperHtml(details.libelle)}</span>`;
+}
+
+function afficherAlertes(alertes) {
+  if (!Array.isArray(alertes) || alertes.length === 0) {
+    return `<p class="note-paiement-marchand">Aucune alerte detectee.</p>`;
+  }
+
+  return `
+    <ul class="liste-alertes-marchand">
+      ${alertes.map(afficherAlerte).join("")}
+    </ul>
+  `;
+}
+
 function afficherAlerte(alerte) {
   const prefixe = alerte.critique ? "Critique: " : "";
-  return `<li>${prefixe}${echapperHtml(alerte.message)}</li>`;
+  const classe = alerte.critique ? "critique" : "simple";
+
+  return `<li class="${classe}">${prefixe}${echapperHtml(alerte.message)}</li>`;
 }
 
 function afficherControles(verification) {
@@ -434,35 +676,40 @@ function afficherMetadonnees(metadonnees) {
     return "";
   }
 
-  return `<p>Metadonnees: <code>${echapperHtml(JSON.stringify(metadonnees))}</code></p>`;
+  return `
+    <details class="details-controle details-metadonnees">
+      <summary>Metadonnees</summary>
+      <pre class="bloc-json">${echapperHtml(JSON.stringify(metadonnees, null, 2))}</pre>
+    </details>
+  `;
 }
 
 function afficherOrigine(origine) {
   const estSandbox = origine === "sandbox";
   const libelle = estSandbox ? "Sandbox de test" : "Application marchande";
-  const classe = estSandbox ? "neutre" : "succes";
+  const classe = estSandbox ? "neutre" : "info";
 
-  return `<p class="etat-decision ${classe}">Origine: ${echapperHtml(libelle)}</p>`;
+  return `<span class="etat-decision ${classe}">Origine: ${echapperHtml(libelle)}</span>`;
 }
 
 function afficherDecision(paiement) {
   if (paiement.statut === "PAYE") {
-    return `<p class="etat-decision succes">Decision finale: paiement accepte</p>`;
+    return `<span class="etat-decision succes">Decision finale: paiement accepte</span>`;
   }
 
   if (paiement.statut === "REFUSE") {
-    return `<p class="etat-decision erreur">Decision finale: paiement refuse</p>`;
+    return `<span class="etat-decision erreur">Decision finale: paiement refuse</span>`;
   }
 
   if (paiement.statut === "ABANDONNE") {
-    return `<p class="etat-decision neutre">Paiement abandonne</p>`;
+    return `<span class="etat-decision neutre">Paiement abandonne</span>`;
   }
 
   if (paiement.preuve) {
-    return `<p class="etat-decision attente">Decision finale: en attente</p>`;
+    return `<span class="etat-decision attente">Decision finale: en attente</span>`;
   }
 
-  return `<p class="etat-decision neutre">Decision finale: aucun justificatif recu</p>`;
+  return `<span class="etat-decision neutre">Decision finale: aucun justificatif recu</span>`;
 }
 
 function afficherWebhook(paiement) {

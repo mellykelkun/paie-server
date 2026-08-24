@@ -1,53 +1,107 @@
 const { pageHtml, echapperHtml, formaterMontant } = require("./commun");
 
-function afficherPaiement(paiement) {
-  const moyens = paiement.moyensPaiement.map((moyen) => `
-    <label class="methode">
-      <input type="radio" name="moyenPaiement" value="${echapperHtml(moyen.code)}" required>
-      <strong>${echapperHtml(moyen.libelle)}</strong>
-      <span class="compte-paiement">
-        <span><span class="libelle-compte">Compte marchand:</span> ${echapperHtml(moyen.nomCompte)}</span>
-        <span><span class="libelle-compte">Numero marchand:</span> <span class="numero-compte">${echapperHtml(formaterNumeroCompte(moyen.numeroCompte))}</span></span>
-      </span>
-      <small>${echapperHtml(instructionPaiementClient(moyen))}</small>
-    </label>
-  `).join("");
+function afficherPaiement(paiement, options = {}) {
+  const moyens = paiement.moyensPaiement.map(afficherMethodePaiement).join("");
   const statutClient = libelleStatutClient(paiement.statut);
 
   return pageHtml("Paiement securise", `
-    <main>
-      <h1>Finaliser le paiement</h1>
-      <section class="boite">
-        <p class="montant">${formaterMontant(paiement.montant, paiement.devise)}</p>
-        <p>Commande: <strong>${echapperHtml(paiement.idCommande)}</strong></p>
-        <p>Statut: <strong id="statut">${echapperHtml(statutClient)}</strong></p>
-        <p>Reference: <strong>${echapperHtml(paiement.referencePaiement)}</strong></p>
+    <main class="page-paiement-client">
+      <section class="entete-paiement-client">
+        <div>
+          <p class="badge-modale">Paiement securise</p>
+          <h1>Reglez votre commande</h1>
+          <p>
+            Payez directement le marchand avec l'application de votre choix,
+            puis ajoutez ici le recu officiel pour validation.
+          </p>
+        </div>
+        <div class="montant-client">
+          <span>Montant a payer</span>
+          <strong>${formaterMontant(paiement.montant, paiement.devise)}</strong>
+        </div>
       </section>
 
-      <form id="formulairePreuve" class="boite">
-        <h2>Moyen de paiement</h2>
-        <div>${moyens}</div>
-
-        <div class="boite-secondaire">
-          <p>Reference: <strong>${echapperHtml(paiement.referencePaiement)}</strong></p>
-          <p>Montant marchand a couvrir: <strong>${formaterMontant(paiement.montant, paiement.devise)}</strong></p>
-          <p>Si l'application propose un motif ou une note, indiquez la reference du paiement.</p>
-          <p>Le recu doit couvrir ce montant. Les frais affiches par l'application de paiement sont controles automatiquement.</p>
-          <p>Ajoutez le recu officiel complet depuis l'application du service choisi.</p>
-          <p>Wave: recu de transaction ou detail avec statut, montant, date et numero destinataire visibles.</p>
-          <p>Orange Money: recu Maxi It avec montant transfere, numero beneficiaire, date et reference visibles.</p>
+      <section class="resume-paiement-client">
+        <div>
+          <span>Commande</span>
+          <strong>${echapperHtml(paiement.idCommande)}</strong>
         </div>
-
-        <label>Justificatif de paiement
-          <input name="fichierPreuve" type="file" accept="image/png,image/jpeg,image/webp" required>
-        </label>
-        <div id="zoneApercu" class="apercu-preuve" hidden>
-          <img id="imageApercu" alt="Apercu du justificatif">
-          <p id="nomFichier"></p>
+        <div>
+          <span>Reference a indiquer</span>
+          <strong>${echapperHtml(paiement.referencePaiement)}</strong>
         </div>
+        <div>
+          <span>Etat</span>
+          <strong id="statut">${echapperHtml(statutClient)}</strong>
+        </div>
+      </section>
 
-        <button type="submit">Envoyer le justificatif</button>
-        <button type="submit" class="bouton-secondaire" form="formulaireAbandon">Annuler le paiement</button>
+      <form id="formulairePreuve" class="formulaire-paiement-client">
+        <section class="etape-client">
+          <div class="entete-etape-client">
+            <span>1</span>
+            <div>
+              <h2>Choisissez comment vous allez payer</h2>
+              <p>Selectionnez le service utilise, puis envoyez le montant au compte marchand affiche.</p>
+            </div>
+          </div>
+          <div class="liste-methodes-client">${moyens}</div>
+        </section>
+
+        <section class="etape-client">
+          <div class="entete-etape-client">
+            <span>2</span>
+            <div>
+              <h2>Effectuez le transfert</h2>
+              <p>Gardez cette page ouverte pendant le paiement. Elle vous servira a envoyer le recu ensuite.</p>
+            </div>
+          </div>
+          <ol class="instructions-client">
+            <li>
+              <strong>Payez le montant demande.</strong>
+              <span>Le transfert doit couvrir ${formaterMontant(paiement.montant, paiement.devise)}. Si l'application ajoute des frais, incluez-les dans le paiement.</span>
+            </li>
+            <li>
+              <strong>Ajoutez la reference si une note est proposee.</strong>
+              <span>Utilisez <span class="reference-client">${echapperHtml(paiement.referencePaiement)}</span> pour aider le marchand a retrouver la commande.</span>
+            </li>
+            <li>
+              <strong>Conservez le recu officiel complet.</strong>
+              <span>Le recu doit afficher le statut, le montant, la date, la reference et le numero destinataire.</span>
+            </li>
+          </ol>
+        </section>
+
+        <section class="etape-client">
+          <div class="entete-etape-client">
+            <span>3</span>
+            <div>
+              <h2>Ajoutez le recu de paiement</h2>
+              <p>Envoyez une capture lisible du recu officiel. Formats acceptes: PNG, JPEG ou WebP, moins de 5 Mo.</p>
+            </div>
+          </div>
+
+          <div class="zone-upload-preuve">
+            <input id="fichierPreuve" class="champ-fichier-preuve" name="fichierPreuve" type="file" accept="image/png,image/jpeg,image/webp" required>
+            <label for="fichierPreuve" class="bouton-upload-preuve">
+              <span class="icone-upload-preuve">+</span>
+              <span>
+                <strong>Choisir le recu officiel</strong>
+                <small id="nomFichierUpload">Aucun fichier choisi</small>
+              </span>
+            </label>
+          </div>
+
+          <div id="zoneApercu" class="apercu-preuve" hidden>
+            <img id="imageApercu" alt="Apercu du justificatif">
+            <p id="nomFichier"></p>
+          </div>
+        </section>
+
+        <div class="actions-paiement-client">
+          <button type="submit">Envoyer le recu</button>
+          <button type="submit" class="bouton-secondaire" form="formulaireAbandon">Annuler le paiement</button>
+        </div>
         <p id="message"></p>
       </form>
       <form id="formulaireAbandon" method="post" action="/paiement/${echapperHtml(encodeURIComponent(paiement.jetonClient || paiement.jetonPaiement || paiement.id))}/abandonner"></form>
@@ -61,6 +115,7 @@ function afficherPaiement(paiement) {
       const zoneApercu = document.getElementById("zoneApercu");
       const imageApercu = document.getElementById("imageApercu");
       const nomFichier = document.getElementById("nomFichier");
+      const nomFichierUpload = document.getElementById("nomFichierUpload");
       const jetonPaiement = ${JSON.stringify(paiement.jetonClient || paiement.jetonPaiement || paiement.id)};
       const libellesStatuts = {
         CREE: "En attente de paiement",
@@ -87,6 +142,7 @@ function afficherPaiement(paiement) {
           zoneApercu.hidden = true;
           imageApercu.removeAttribute("src");
           nomFichier.textContent = "";
+          nomFichierUpload.textContent = "Aucun fichier choisi";
           return;
         }
 
@@ -96,6 +152,7 @@ function afficherPaiement(paiement) {
           zoneApercu.hidden = true;
           imageApercu.removeAttribute("src");
           nomFichier.textContent = "";
+          nomFichierUpload.textContent = "Aucun fichier choisi";
           return;
         }
 
@@ -105,13 +162,16 @@ function afficherPaiement(paiement) {
           zoneApercu.hidden = true;
           imageApercu.removeAttribute("src");
           nomFichier.textContent = "";
+          nomFichierUpload.textContent = "Aucun fichier choisi";
           return;
         }
 
         urlApercu = URL.createObjectURL(fichier);
         imageApercu.src = urlApercu;
         nomFichier.textContent = fichier.name;
+        nomFichierUpload.textContent = fichier.name;
         zoneApercu.hidden = false;
+        message.textContent = "";
       });
 
       formulaire.addEventListener("submit", async (evenement) => {
@@ -189,7 +249,7 @@ function afficherPaiement(paiement) {
         });
       }
     </script>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 function libelleStatutClient(statut) {
@@ -204,6 +264,26 @@ function libelleStatutClient(statut) {
   };
 
   return libelles[statut] || statut;
+}
+
+function afficherMethodePaiement(moyen) {
+  return `
+    <label class="methode-client">
+      <input class="radio-methode-client" type="radio" name="moyenPaiement" value="${echapperHtml(moyen.code)}" required>
+      <span class="radio-visible-client" aria-hidden="true"></span>
+      <span class="contenu-methode-client">
+        <span class="titre-methode-client">
+          <strong>${echapperHtml(moyen.libelle)}</strong>
+          <span>Compte marchand</span>
+        </span>
+        <span class="compte-paiement">
+          <span><span class="libelle-compte">Nom:</span> ${echapperHtml(moyen.nomCompte)}</span>
+          <span><span class="libelle-compte">Numero:</span> <span class="numero-compte">${echapperHtml(formaterNumeroCompte(moyen.numeroCompte))}</span></span>
+        </span>
+        <small>${echapperHtml(instructionPaiementClient(moyen))}</small>
+      </span>
+    </label>
+  `;
 }
 
 module.exports = afficherPaiement;

@@ -6,6 +6,10 @@ const {
   VARIABLES_TECHNIQUES,
   grouperDefinitions,
 } = require("../configuration");
+const {
+  THEMES_INTERFACE,
+  couleursThemeInterface,
+} = require("./themes");
 
 function afficherConfigurationMarchand(champs, options = {}) {
   const groupes = grouperDefinitions(champs);
@@ -155,7 +159,7 @@ function afficherConfigurationMarchand(champs, options = {}) {
         document.body.removeChild(zoneTexte);
       }
     </script>
-  `);
+  `, { themeInterface: options.themeInterface });
 }
 
 function afficherMessageRetablissement() {
@@ -259,6 +263,15 @@ function afficherAideGroupe(section) {
           Les adresses qui commencent par <strong>paie-server-...</strong> servent seulement entre
           les conteneurs Docker. Elles ne sont pas les adresses a donner aux clients.
         </p>
+        <p>
+          Pour un vrai site marchand, une seule URL de retour client suffit. Paie Server gere deja
+          les pages preuve recue, preuve non recue et echec d'envoi; si le client abandonne,
+          il peut etre renvoye vers la meme URL avec <strong>retour=envoi-abandonne</strong>.
+          Apres reception du justificatif, Paie Server utilise aussi cette URL avec
+          <strong>retour=preuve-envoyee</strong>. Dans les deux cas, le parametre
+          <strong>commande</strong> est ajoute pour retrouver la commande cote site marchand.
+          Une URL d'annulation separee reste possible, mais elle est optionnelle.
+        </p>
       </div>
     `;
   }
@@ -269,13 +282,20 @@ function afficherAideGroupe(section) {
 function afficherChamp(champ) {
   const valeur = champ.secret ? "" : champ.valeur;
   const source = champ.configureeEnBase ? "Configure" : "Valeur par defaut";
+  const obligation = champ.obligatoire
+    ? `<span class="indicateur-obligatoire">Obligatoire</span>`
+    : "";
   const controle = champ.secret
     ? afficherChampSecret(champ)
     : champ.type === "boolean"
       ? afficherChampBooleen(champ)
-      : champ.type === "textarea"
-        ? afficherChampTextarea(champ, valeur)
-        : afficherChampTexte(champ, valeur);
+      : champ.cle === "THEME_INTERFACE"
+        ? afficherChampThemeInterface(valeur)
+        : champ.type === "select"
+        ? afficherChampSelection(champ, valeur)
+        : champ.type === "textarea"
+          ? afficherChampTextarea(champ, valeur)
+          : afficherChampTexte(champ, valeur);
 
   return `
     <article class="champ-configuration">
@@ -283,7 +303,10 @@ function afficherChamp(champ) {
         <div>
           <label for="${echapperHtml(champ.cle)}">${echapperHtml(champ.libelle)}</label>
         </div>
-        <span>${echapperHtml(source)}</span>
+        <div class="badges-configuration">
+          ${obligation}
+          <span>${echapperHtml(source)}</span>
+        </div>
       </div>
       ${controle}
       <p>${echapperHtml(champ.description)}</p>
@@ -293,8 +316,63 @@ function afficherChamp(champ) {
   `;
 }
 
+function afficherChampSelection(champ, valeur) {
+  const options = Array.isArray(champ.options) ? champ.options : [];
+  const required = champ.obligatoire ? "required" : "";
+  const lignes = options
+    .map((option) => {
+      const selectionnee = option.valeur === valeur ? "selected" : "";
+      const libelle = option.description
+        ? `${option.libelle} - ${option.description}`
+        : option.libelle;
+
+      return `<option value="${echapperHtml(option.valeur)}" ${selectionnee}>${echapperHtml(libelle)}</option>`;
+    })
+    .join("");
+
+  return `
+    <select id="${echapperHtml(champ.cle)}" name="${echapperHtml(champ.cle)}" ${required}>
+      ${lignes}
+    </select>
+  `;
+}
+
+function afficherChampThemeInterface(valeur) {
+  return `
+    <div class="grille-themes-interface">
+      ${THEMES_INTERFACE.map((theme) => afficherOptionThemeInterface(theme, valeur)).join("")}
+    </div>
+  `;
+}
+
+function afficherOptionThemeInterface(theme, valeur) {
+  const couleurs = couleursThemeInterface(theme.code);
+  const coche = theme.code === valeur ? "checked" : "";
+  const echantillons = [
+    couleurs.fond,
+    couleurs.surface,
+    couleurs.primaire,
+    couleurs.accent,
+    couleurs.secondaire,
+  ];
+
+  return `
+    <label class="option-theme-interface">
+      <input class="radio-theme-interface" type="radio" name="THEME_INTERFACE" value="${echapperHtml(theme.code)}" ${coche} required>
+      <span class="echantillons-theme-interface" aria-hidden="true">
+        ${echantillons.map((couleur) => `<span style="background: ${echapperHtml(couleur)}"></span>`).join("")}
+      </span>
+      <span class="texte-theme-interface">
+        <strong>${echapperHtml(theme.libelle)}</strong>
+        <small>${echapperHtml(theme.description)}</small>
+      </span>
+    </label>
+  `;
+}
+
 function afficherChampTexte(champ, valeur) {
   const type = champ.type === "url" ? "url" : champ.type === "number" ? "number" : "text";
+  const required = champ.obligatoire ? "required" : "";
   const attributsNombre = champ.type === "number"
     ? [
         champ.min === undefined ? "" : `min="${echapperHtml(champ.min)}"`,
@@ -310,18 +388,22 @@ function afficherChampTexte(champ, valeur) {
       type="${type}"
       value="${echapperHtml(valeur)}"
       placeholder="${echapperHtml(champ.exemple)}"
+      ${required}
       ${attributsNombre}
     >
   `;
 }
 
 function afficherChampTextarea(champ, valeur) {
+  const required = champ.obligatoire ? "required" : "";
+
   return `
     <textarea
       id="${echapperHtml(champ.cle)}"
       name="${echapperHtml(champ.cle)}"
       rows="3"
       placeholder="${echapperHtml(champ.exemple)}"
+      ${required}
     >${echapperHtml(valeur)}</textarea>
   `;
 }

@@ -11,6 +11,10 @@ const {
   chargerConfigurationApplication,
   valeurConfiguration,
 } = require("../configuration");
+const {
+  styleThemeInterface,
+  valeurThemeInterface,
+} = require("../interfaces/themes");
 
 const port = Number(process.env.PORT_SANDBOX || 4000);
 const urlSandboxPublicDemarrage = process.env.URL_SANDBOX_PUBLIC || `http://localhost:${port}`;
@@ -57,7 +61,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       const resultat = await creerCommandeSandbox(corps.offre);
 
       if (!resultat.ok) {
-        return envoyerHtml(reponse, 400, afficherMessage(resultat.message));
+        return envoyerHtml(reponse, 400, await afficherMessage(resultat.message));
       }
 
       reponse.writeHead(303, { location: resultat.urlPaiement });
@@ -69,7 +73,7 @@ const serveur = http.createServer(async (requete, reponse) => {
       const resultat = await abandonnerCommandeSandbox(corps.idCommande);
 
       if (!resultat.ok) {
-        return envoyerHtml(reponse, resultat.codeHttp || 400, afficherMessage(resultat.message));
+        return envoyerHtml(reponse, resultat.codeHttp || 400, await afficherMessage(resultat.message));
       }
 
       reponse.writeHead(303, { location: `/?commande=${encodeURIComponent(resultat.idCommande)}&retour=envoi-abandonne` });
@@ -89,10 +93,10 @@ const serveur = http.createServer(async (requete, reponse) => {
       return envoyerJson(reponse, 200, { recu: true });
     }
 
-    return envoyerHtml(reponse, 404, afficherMessage("Page introuvable"));
+    return envoyerHtml(reponse, 404, await afficherMessage("Page introuvable"));
   } catch (erreur) {
     console.error("Erreur sandbox:", erreur);
-    return envoyerHtml(reponse, 500, afficherMessage("Erreur interne"));
+    return envoyerHtml(reponse, 500, await afficherMessage("Erreur interne"));
   }
 });
 
@@ -248,8 +252,7 @@ async function appelerCreationPaiement(commande, configuration) {
         type: commande.type,
         nom: commande.nom,
       },
-      urlRetour: `${urlSandboxPublic}/?commande=${encodeURIComponent(commande.id)}&retour=preuve-envoyee`,
-      urlAnnulation: `${urlSandboxPublic}/?commande=${encodeURIComponent(commande.id)}&retour=envoi-abandonne`,
+      urlRetour: `${urlSandboxPublic}/`,
       urlWebhook: urlWebhookSandbox,
       secretWebhook: secretWebhookSandbox,
     }),
@@ -317,6 +320,8 @@ async function signatureValide(corps, signatureRecue) {
 
 async function afficherAccueil(parametres) {
   const commandes = chargerCommandes();
+  const configuration = await chargerConfigurationSandbox();
+  const optionsInterface = optionsInterfaceSandbox(configuration);
   traiterRetourClient(parametres, commandes);
   const cartesOffres = offres.map(afficherOffre).join("");
   const lignesCommandes = commandes.map(afficherCommande).join("");
@@ -344,7 +349,7 @@ async function afficherAccueil(parametres) {
         ${lignesCommandes || "<p>Aucune commande de test pour le moment.</p>"}
       </section>
     </main>
-  `);
+  `, optionsInterface);
 }
 
 function afficherOffre(offre) {
@@ -542,7 +547,9 @@ function estDecisionFinale(commande) {
   );
 }
 
-function afficherMessage(message) {
+async function afficherMessage(message) {
+  const configuration = await chargerConfigurationSandbox();
+
   return pageHtml(message, `
     <main>
       <section class="bloc">
@@ -550,10 +557,18 @@ function afficherMessage(message) {
         <p><a href="/">Retour aux offres</a></p>
       </section>
     </main>
-  `);
+  `, optionsInterfaceSandbox(configuration));
 }
 
-function pageHtml(titre, contenu) {
+function optionsInterfaceSandbox(configuration) {
+  return {
+    themeInterface: valeurConfiguration(configuration, "THEME_INTERFACE", "paie_clair"),
+  };
+}
+
+function pageHtml(titre, contenu, options = {}) {
+  const themeInterface = valeurThemeInterface(options.themeInterface || process.env.THEME_INTERFACE);
+
   return `<!doctype html>
 <html lang="fr">
 <head>
@@ -561,11 +576,12 @@ function pageHtml(titre, contenu) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${echapperHtml(titre)}</title>
   <style>
+    ${styleThemeInterface(themeInterface)}
     body {
       margin: 0;
       font-family: Arial, sans-serif;
-      color: #172026;
-      background: #f4f7f6;
+      color: var(--couleur-texte);
+      background: var(--couleur-fond);
     }
     main {
       width: min(1040px, calc(100% - 32px));
@@ -575,18 +591,18 @@ function pageHtml(titre, contenu) {
       margin-top: 0;
     }
     a {
-      color: #0f766e;
+      color: var(--couleur-primaire);
       font-weight: 700;
     }
     .action-indisponible {
       display: inline-block;
       padding: 4px 0;
-      color: #526066;
+      color: var(--couleur-texte-secondaire);
       font-weight: 700;
     }
     .entete, .bloc, .offre {
-      background: white;
-      border: 1px solid #d8e0e3;
+      background: var(--couleur-surface);
+      border: 1px solid var(--couleur-bordure);
       border-radius: 8px;
       padding: 22px;
       margin-bottom: 18px;
@@ -601,18 +617,18 @@ function pageHtml(titre, contenu) {
       margin-bottom: 10px;
       padding: 4px 8px;
       border-radius: 6px;
-      color: #0f5132;
-      background: #d9f4e7;
+      color: var(--couleur-primaire-texte);
+      background: var(--couleur-primaire);
       font-size: 13px;
       font-weight: 700;
     }
     .badge-attente {
-      color: #7c2d12;
-      background: #ffedd5;
+      color: var(--couleur-attente);
+      background: var(--couleur-attente-fond);
     }
     .badge-neutre {
-      color: #526066;
-      background: #eef2f4;
+      color: var(--couleur-neutre);
+      background: var(--couleur-neutre-fond);
     }
     .prix {
       font-size: 30px;
@@ -622,15 +638,15 @@ function pageHtml(titre, contenu) {
       padding: 11px 16px;
       border: 0;
       border-radius: 6px;
-      color: white;
-      background: #0f766e;
+      color: var(--couleur-primaire-texte);
+      background: var(--couleur-primaire);
       cursor: pointer;
       font: inherit;
       font-weight: 700;
     }
     button.bouton-secondaire {
-      color: #172026;
-      background: #e8eef0;
+      color: var(--couleur-secondaire-texte);
+      background: var(--couleur-secondaire);
     }
     .actions-commande {
       display: flex;
@@ -650,15 +666,15 @@ function pageHtml(titre, contenu) {
     }
     .commande {
       padding: 14px 0;
-      border-top: 1px solid #e1e7ea;
+      border-top: 1px solid var(--couleur-bordure);
     }
     .message-retour {
-      border-color: #fed7aa;
-      background: #fff7ed;
+      border-color: var(--couleur-attente-bordure);
+      background: var(--couleur-attente-fond);
     }
     .commande p {
       margin-bottom: 4px;
-      color: #526066;
+      color: var(--couleur-texte-secondaire);
     }
     .decision {
       display: inline-block;
@@ -669,34 +685,34 @@ function pageHtml(titre, contenu) {
       font-weight: 700;
     }
     .decision-ok, .commande .decision-ok {
-      color: #0f5132;
-      background: #d9f4e7;
+      color: var(--couleur-succes);
+      background: var(--couleur-succes-fond);
     }
     .decision-refus, .commande .decision-refus {
-      color: #842029;
-      background: #f8d7da;
+      color: var(--couleur-erreur);
+      background: var(--couleur-erreur-fond);
     }
     .decision-attente, .commande .decision-attente {
-      color: #7c2d12;
-      background: #ffedd5;
+      color: var(--couleur-attente);
+      background: var(--couleur-attente-fond);
     }
     .decision-neutre, .commande .decision-neutre {
-      color: #526066;
-      background: #eef2f4;
+      color: var(--couleur-neutre);
+      background: var(--couleur-neutre-fond);
     }
     .details-commande {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
       margin-top: 10px;
-      color: #526066;
+      color: var(--couleur-texte-secondaire);
       font-size: 14px;
     }
     .details-commande span {
       padding: 4px 7px;
-      border: 1px solid #d8e0e3;
+      border: 1px solid var(--couleur-bordure);
       border-radius: 6px;
-      background: #f8faf9;
+      background: var(--couleur-surface-alt);
     }
     @media (max-width: 760px) {
       .grille, .titre-ligne, .commande {
@@ -705,7 +721,7 @@ function pageHtml(titre, contenu) {
     }
   </style>
 </head>
-<body>
+<body data-theme-interface="${echapperHtml(themeInterface)}">
   ${contenu}
 </body>
 </html>`;
