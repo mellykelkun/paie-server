@@ -36,6 +36,7 @@ function afficherConfigurationMarchand(champs, options = {}) {
         </div>
         <div class="actions">
           <a class="bouton-lien secondaire" href="/marchand">Tableau</a>
+          <a class="bouton-lien secondaire" href="/marchand/documentation">Documentation</a>
         </div>
       </div>
 
@@ -58,7 +59,11 @@ function afficherConfigurationMarchand(champs, options = {}) {
           method="post"
           action="/marchand/configuration/retablir-sandbox"
           class="formulaire-retablissement"
-          onsubmit="return confirm('Retablir les adresses essentielles du sandbox Docker local ? Les cles et les comptes de paiement ne seront pas modifies.');"
+          data-confirmation-action
+          data-confirmation-badge="Configuration sandbox"
+          data-confirmation-titre="Retablir le sandbox Docker local"
+          data-confirmation-texte="Retablir les adresses essentielles du sandbox Docker local ? Les cles et les comptes de paiement ne seront pas modifies."
+          data-confirmation-bouton="Retablir"
         >
           <button type="submit" class="bouton-secondaire">Retablir le sandbox Docker local</button>
           <span>Remet les adresses de test et l'ID client de demo. Ne modifie aucune cle.</span>
@@ -85,8 +90,35 @@ function afficherConfigurationMarchand(champs, options = {}) {
       </section>
     </main>
 
+    <div id="modaleConfirmationAction" class="modale" hidden role="dialog" aria-modal="true" aria-labelledby="titreModaleConfirmation">
+      <div class="modale-fond" data-fermer-confirmation></div>
+      <section class="modale-contenu" tabindex="-1">
+        <p id="badgeModaleConfirmation" class="badge-modale">Confirmation</p>
+        <h2 id="titreModaleConfirmation">Confirmer l'action</h2>
+        <p id="texteModaleConfirmation"></p>
+        <div class="actions modale-actions">
+          <button type="button" class="bouton-secondaire" data-annuler-confirmation>Annuler</button>
+          <button type="button" id="boutonConfirmerAction">Confirmer</button>
+        </div>
+      </section>
+    </div>
+
     <script>
+      const modaleConfirmationAction = document.getElementById("modaleConfirmationAction");
+      const badgeModaleConfirmation = document.getElementById("badgeModaleConfirmation");
+      const titreModaleConfirmation = document.getElementById("titreModaleConfirmation");
+      const texteModaleConfirmation = document.getElementById("texteModaleConfirmation");
+      const boutonConfirmerAction = document.getElementById("boutonConfirmerAction");
+      const boutonAnnulerConfirmation = modaleConfirmationAction.querySelector("[data-annuler-confirmation]");
+      const fondConfirmation = modaleConfirmationAction.querySelector("[data-fermer-confirmation]");
+      let formulaireConfirmationActif = null;
+
       document.addEventListener("click", gererActionSecret);
+      document.addEventListener("submit", gererConfirmationAction);
+      document.addEventListener("keydown", gererToucheConfirmation);
+      boutonAnnulerConfirmation.addEventListener("click", () => fermerConfirmationAction(false));
+      fondConfirmation.addEventListener("click", () => fermerConfirmationAction(false));
+      boutonConfirmerAction.addEventListener("click", () => fermerConfirmationAction(true));
 
       function gererActionSecret(evenement) {
         const bouton = evenement.target.closest("button[data-generer-secret], button[data-afficher-secret], button[data-copier-secret]");
@@ -157,6 +189,46 @@ function afficherConfigurationMarchand(champs, options = {}) {
         zoneTexte.select();
         document.execCommand("copy");
         document.body.removeChild(zoneTexte);
+      }
+
+      function gererConfirmationAction(evenement) {
+        const formulaire = evenement.target.closest("form[data-confirmation-action]");
+
+        if (!formulaire || formulaire.dataset.confirmationValidee === "1") {
+          return;
+        }
+
+        evenement.preventDefault();
+        formulaireConfirmationActif = formulaire;
+        badgeModaleConfirmation.textContent = formulaire.dataset.confirmationBadge || "Confirmation";
+        titreModaleConfirmation.textContent = formulaire.dataset.confirmationTitre || "Confirmer l'action";
+        texteModaleConfirmation.textContent = formulaire.dataset.confirmationTexte || "Confirmer cette action ?";
+        boutonConfirmerAction.textContent = formulaire.dataset.confirmationBouton || "Confirmer";
+        boutonConfirmerAction.className = formulaire.dataset.confirmationClasse || "";
+        modaleConfirmationAction.hidden = false;
+        window.setTimeout(() => boutonConfirmerAction.focus(), 0);
+      }
+
+      function fermerConfirmationAction(confirmee) {
+        const formulaire = formulaireConfirmationActif;
+        formulaireConfirmationActif = null;
+        modaleConfirmationAction.hidden = true;
+
+        if (!confirmee || !formulaire) {
+          return;
+        }
+
+        formulaire.dataset.confirmationValidee = "1";
+        formulaire.submit();
+      }
+
+      function gererToucheConfirmation(evenement) {
+        if (modaleConfirmationAction.hidden || evenement.key !== "Escape") {
+          return;
+        }
+
+        evenement.preventDefault();
+        fermerConfirmationAction(false);
       }
     </script>
   `, { themeInterface: options.themeInterface });

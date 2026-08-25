@@ -12,8 +12,10 @@ function pageHtml(titre, contenu, options = {}) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${echapperHtml(titre)}</title>
-  <style>
+  <style id="styleThemeInterfaceTempsReel">
     ${styleThemeInterface(themeInterface)}
+  </style>
+  <style>
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -673,6 +675,9 @@ function pageHtml(titre, contenu, options = {}) {
       outline: 3px solid var(--couleur-focus);
       outline-offset: 3px;
     }
+    .theme-documentation {
+      cursor: default;
+    }
     .champ-secret {
       display: grid;
       gap: 8px;
@@ -724,6 +729,148 @@ function pageHtml(titre, contenu, options = {}) {
       color: var(--couleur-texte-secondaire);
       line-height: 1.45;
     }
+    .documentation-marchand {
+      width: min(1180px, calc(100% - 32px));
+    }
+    .navigation-documentation {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 18px;
+      padding: 10px;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 8px;
+      background: var(--couleur-surface);
+      box-shadow: 0 1px 3px var(--ombre-interface);
+    }
+    .navigation-documentation a {
+      padding: 7px 9px;
+      border-radius: 6px;
+      color: var(--couleur-texte);
+      background: var(--couleur-surface-alt);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .navigation-documentation a:hover,
+    .navigation-documentation a:focus-visible {
+      color: var(--couleur-primaire-texte);
+      background: var(--couleur-primaire);
+    }
+    .section-documentation {
+      padding: 24px 0;
+      border-top: 1px solid var(--couleur-bordure);
+    }
+    .section-documentation h2 {
+      margin-bottom: 10px;
+    }
+    .section-documentation h3 {
+      margin: 0 0 8px;
+      color: var(--couleur-texte);
+      font-size: 18px;
+    }
+    .section-documentation p {
+      color: var(--couleur-texte-secondaire);
+      line-height: 1.5;
+    }
+    .grille-documentation {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+    .carte-documentation,
+    .ligne-reference-doc {
+      padding: 14px;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 8px;
+      background: var(--couleur-surface);
+    }
+    .carte-documentation p,
+    .ligne-reference-doc p {
+      margin: 8px 0 0;
+    }
+    .liste-documentation {
+      display: grid;
+      gap: 8px;
+      margin: 12px 0;
+      padding-left: 20px;
+      color: var(--couleur-texte-secondaire);
+      line-height: 1.5;
+    }
+    .code-documentation {
+      max-height: 420px;
+      overflow: auto;
+      margin: 12px 0;
+      padding: 12px;
+      border-radius: 8px;
+      color: var(--couleur-code-texte);
+      background: var(--couleur-code-fond);
+      white-space: pre-wrap;
+    }
+    .code-documentation code,
+    .section-documentation code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
+    .tableau-documentation {
+      overflow-x: auto;
+      margin: 12px 0;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 8px;
+      background: var(--couleur-surface);
+    }
+    .tableau-documentation table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 680px;
+    }
+    .tableau-documentation th,
+    .tableau-documentation td {
+      padding: 10px;
+      border-bottom: 1px solid var(--couleur-bordure);
+      text-align: left;
+      vertical-align: top;
+    }
+    .tableau-documentation th {
+      color: var(--couleur-texte);
+      background: var(--couleur-surface-alt);
+      font-size: 13px;
+    }
+    .tableau-documentation td {
+      color: var(--couleur-texte-secondaire);
+      line-height: 1.45;
+    }
+    .tableau-documentation tr:last-child td {
+      border-bottom: 0;
+    }
+    .groupe-reference-doc {
+      display: grid;
+      gap: 10px;
+      margin: 18px 0;
+    }
+    .ligne-reference-doc-entete {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .ligne-reference-doc-entete span {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .ligne-reference-doc-entete small {
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: var(--couleur-secondaire-texte);
+      background: var(--couleur-secondaire);
+      font-weight: 700;
+    }
     .description-section {
       max-width: 760px;
       margin: 8px 0 14px;
@@ -742,6 +889,69 @@ function pageHtml(titre, contenu, options = {}) {
     .liste-paiements-marchand {
       display: grid;
       gap: 12px;
+      max-height: min(72vh, 760px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 4px;
+      scrollbar-color: var(--couleur-bordure-forte) transparent;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+    }
+    .liste-paiements-marchand::-webkit-scrollbar {
+      width: 8px;
+    }
+    .liste-paiements-marchand::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .liste-paiements-marchand::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: var(--couleur-bordure-forte);
+    }
+    .formulaire-suppression-historique {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+    }
+    .barre-suppression-historique {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 8px;
+      background: var(--couleur-surface-alt);
+    }
+    .selection-tout-historique,
+    .selection-paiement-historique {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      color: var(--couleur-texte);
+      font-weight: 700;
+    }
+    .selection-tout-historique {
+      margin-right: auto;
+    }
+    .selection-paiement-historique {
+      width: fit-content;
+      padding: 8px 10px;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 8px;
+      background: var(--couleur-surface-alt);
+      font-size: 13px;
+    }
+    .selection-tout-historique input,
+    .selection-paiement-historique input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--couleur-danger);
+    }
+    .compteur-selection-historique {
+      color: var(--couleur-texte-secondaire);
+      font-size: 13px;
+      font-weight: 700;
     }
     .etat-vide-marchand {
       padding: 18px;
@@ -836,6 +1046,11 @@ function pageHtml(titre, contenu, options = {}) {
     button.bouton-danger {
       color: var(--couleur-danger-texte);
       background: var(--couleur-danger);
+    }
+    button.bouton-danger:disabled {
+      color: var(--couleur-texte-secondaire);
+      background: var(--couleur-bordure-forte);
+      cursor: not-allowed;
     }
     .modale {
       position: fixed;
@@ -1352,6 +1567,32 @@ function pageHtml(titre, contenu, options = {}) {
       .titre-ligne form,
       .titre-ligne button {
         width: 100%;
+      }
+      .barre-suppression-historique {
+        align-items: stretch;
+        display: grid;
+      }
+      .selection-tout-historique {
+        margin-right: 0;
+      }
+      .barre-suppression-historique button {
+        width: 100%;
+      }
+      .selection-paiement-historique {
+        width: auto;
+      }
+      .navigation-documentation {
+        position: static;
+      }
+      .ligne-reference-doc-entete {
+        display: grid;
+      }
+      .ligne-reference-doc-entete span {
+        justify-content: flex-start;
+      }
+      .liste-paiements-marchand {
+        max-height: min(72vh, 620px);
+        padding-right: 0;
       }
       .apercu-preuve-marchand img,
       .apercu-preuve-marchand.vide {

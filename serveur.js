@@ -16,6 +16,11 @@ const afficherMessage = require("./interfaces/message");
 const afficherConnexionMarchand = require("./interfaces/connexion-marchand");
 const afficherInitialisationMarchand = require("./interfaces/initialisation-marchand");
 const afficherConfigurationMarchand = require("./interfaces/configuration-marchand");
+const afficherDocumentationMarchand = require("./interfaces/documentation-marchand");
+const {
+  styleThemeInterface,
+  valeurThemeInterface,
+} = require("./interfaces/themes");
 const {
   afficherPreuveEnvoyee,
   afficherEchecEnvoi,
@@ -71,6 +76,16 @@ const STATUTS_PAIEMENT = {
   ABANDONNE: "ABANDONNE",
 };
 
+const STATUTS_HISTORIQUE_SUPPRIMABLES = new Set([
+  STATUTS_PAIEMENT.PAYE,
+  STATUTS_PAIEMENT.REFUSE,
+  STATUTS_PAIEMENT.ABANDONNE,
+]);
+
+const fluxTempsReelMarchand = new Set();
+const fluxTempsReelPaiements = new Map();
+const fluxTempsReelPaiementsTous = new Set();
+
 function lireSecretEnv(nom, valeurDeveloppement) {
   const valeur = String(process.env[nom] || "").trim();
 
@@ -104,6 +119,25 @@ const serveur = http.createServer(async (requete, reponse) => {
         baseDeDonnees: "ok",
         date: new Date().toISOString(),
       });
+    }
+
+    if (requete.method === "GET" && url.pathname === "/api/temps-reel/marchand") {
+      if (!(await aAccesMarchand(requete, reponse))) {
+        return envoyerTexte(reponse, 401, "Acces marchand invalide.");
+      }
+
+      return ouvrirFluxTempsReelMarchand(requete, reponse);
+    }
+
+    if (requete.method === "GET" && url.pathname.match(/^\/api\/temps-reel\/paiements\/[^/]+$/)) {
+      const identifiantPaiement = url.pathname.split("/")[4];
+      const paiement = await trouverPaiementParAccesPublic(identifiantPaiement);
+
+      if (!paiement) {
+        return envoyerTexte(reponse, 404, "Paiement introuvable.");
+      }
+
+      return ouvrirFluxTempsReelPaiement(requete, reponse, paiement);
     }
 
     if (requete.method === "GET" && url.pathname === "/marchand/initialisation") {
@@ -448,7 +482,78 @@ const serveur = http.createServer(async (requete, reponse) => {
       return envoyerHtml(
         reponse,
         200,
-        afficherMarchand(await chargerPaiements(), await chargerOptionsInterface())
+        afficherMarchand(await chargerPaiements(), {
+          ...(await chargerOptionsInterface()),
+          supprimesHistorique: url.searchParams.get("supprimes") || "",
+          ignoresSuppressionHistorique: url.searchParams.get("ignores") || "",
+        })
+      );
+    }
+
+    if (requete.method === "GET" && url.pathname === "/marchand/fragments") {
+      if (!(await aAccesMarchand(requete, reponse))) {
+        return envoyerJson(reponse, 401, { message: "Acces marchand invalide." });
+      }
+
+      const optionsInterface = await chargerOptionsInterface();
+
+      return envoyerJson(reponse, 200, {
+        ...afficherMarchand.afficherFragments(await chargerPaiements()),
+        theme: donneesThemeInterface(optionsInterface.themeInterface),
+      });
+    }
+
+    if (requete.method === "POST" && url.pathname === "/marchand/paiements/supprimer") {
+      if (!(await aAccesMarchand(requete, reponse))) {
+        reponse.writeHead(303, { location: "/marchand/connexion" });
+        return reponse.end();
+      }
+
+      const corps = await lireCorpsFormulaire(requete);
+      const resultat = await supprimerPaiementsHistoriqueMarchand(corps.idsPaiements);
+      publierEvenementMarchand("historique.supprime", {
+        idsPaiements: resultat.idsSupprimes,
+        supprimes: resultat.supprimes,
+        ignores: resultat.ignores,
+      });
+
+      if (requeteAttendJson(requete)) {
+        return envoyerJson(reponse, 200, {
+          message:
+            resultat.supprimes > 0
+              ? `${resultat.supprimes} element(s) d'historique supprime(s).`
+              : "Aucun element supprimable n'a ete retire.",
+          ...resultat,
+        });
+      }
+
+      const parametresRetour = new URLSearchParams({
+        supprimes: String(resultat.supprimes),
+        ignores: String(resultat.ignores),
+      });
+
+      reponse.writeHead(303, { location: `/marchand?${parametresRetour.toString()}` });
+      return reponse.end();
+    }
+
+    if (requete.method === "GET" && url.pathname === "/marchand/documentation") {
+      if (!(await compteMarchandExiste())) {
+        reponse.writeHead(303, { location: "/marchand/initialisation" });
+        return reponse.end();
+      }
+
+      if (!(await aAccesMarchand(requete, reponse))) {
+        reponse.writeHead(303, { location: "/marchand/connexion" });
+        return reponse.end();
+      }
+
+      const champsConfiguration = await chargerConfigurationPourInterface();
+      const optionsInterface = optionsInterfaceDepuisChamps(champsConfiguration);
+
+      return envoyerHtml(
+        reponse,
+        200,
+        afficherDocumentationMarchand(champsConfiguration, optionsInterface)
       );
     }
 
@@ -484,7 +589,17 @@ const serveur = http.createServer(async (requete, reponse) => {
       }
 
       const corps = await lireCorpsFormulaire(requete);
+      const optionsAvant = await chargerOptionsInterface();
       await enregistrerConfigurationApplication(corps);
+      const optionsApres = await chargerOptionsInterface();
+      publierEvenementMarchand("configuration.modifiee", {
+        theme: donneesThemeInterface(optionsApres.themeInterface),
+      });
+
+      if (optionsAvant.themeInterface !== optionsApres.themeInterface) {
+        publierThemeInterfaceTempsReel(optionsApres.themeInterface);
+      }
+
       reponse.writeHead(303, { location: "/marchand/configuration?enregistre=1" });
       return reponse.end();
     }
@@ -496,6 +611,9 @@ const serveur = http.createServer(async (requete, reponse) => {
       }
 
       await retablirConfigurationSandboxDocker();
+      publierEvenementMarchand("configuration.modifiee", {
+        theme: donneesThemeInterface((await chargerOptionsInterface()).themeInterface),
+      });
       reponse.writeHead(303, { location: "/marchand/configuration?retabli=1" });
       return reponse.end();
     }
@@ -574,6 +692,200 @@ function optionsInterfaceDepuisChamps(champs) {
   return {
     themeInterface: champTheme ? champTheme.valeur : "paie_clair",
   };
+}
+
+function ouvrirFluxTempsReelMarchand(requete, reponse) {
+  const flux = ouvrirFluxTempsReel(requete, reponse, () => {
+    fluxTempsReelMarchand.delete(flux);
+  });
+
+  fluxTempsReelMarchand.add(flux);
+  envoyerEvenementTempsReel(reponse, "temps-reel.pret", {
+    zone: "marchand",
+    date: new Date().toISOString(),
+  });
+}
+
+function ouvrirFluxTempsReelPaiement(requete, reponse, paiement) {
+  const clesPaiement = Array.from(new Set([paiement.id, paiement.jetonClient].filter(Boolean)));
+  const flux = ouvrirFluxTempsReel(requete, reponse, () => {
+    fluxTempsReelPaiementsTous.delete(flux);
+
+    for (const cle of clesPaiement) {
+      const ensemble = fluxTempsReelPaiements.get(cle);
+
+      if (!ensemble) {
+        continue;
+      }
+
+      ensemble.delete(flux);
+
+      if (ensemble.size === 0) {
+        fluxTempsReelPaiements.delete(cle);
+      }
+    }
+  });
+
+  fluxTempsReelPaiementsTous.add(flux);
+
+  for (const cle of clesPaiement) {
+    let ensemble = fluxTempsReelPaiements.get(cle);
+
+    if (!ensemble) {
+      ensemble = new Set();
+      fluxTempsReelPaiements.set(cle, ensemble);
+    }
+
+    ensemble.add(flux);
+  }
+
+  envoyerEvenementTempsReel(reponse, "paiement.snapshot", {
+    type: "paiement.snapshot",
+    idPaiement: paiement.id,
+    idCommande: paiement.idCommande,
+    statut: paiement.statut,
+    section: sectionPaiementMarchand(paiement),
+    modifieLe: paiement.modifieLe,
+    paiement: paiementPublic(paiement),
+  });
+}
+
+function ouvrirFluxTempsReel(requete, reponse, nettoyer) {
+  reponse.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  reponse.write("retry: 3000\n\n");
+
+  const flux = { reponse };
+  const minuteur = setInterval(() => {
+    if (!reponse.destroyed && !reponse.writableEnded) {
+      reponse.write(": ping\n\n");
+    }
+  }, 25_000);
+
+  requete.on("close", () => {
+    clearInterval(minuteur);
+    nettoyer(flux);
+  });
+
+  return flux;
+}
+
+function envoyerEvenementTempsReel(reponse, evenement, donnees) {
+  if (!reponse || reponse.destroyed || reponse.writableEnded) {
+    return;
+  }
+
+  const corps = JSON.stringify(donnees || {});
+  reponse.write(`event: ${evenement}\n`);
+
+  for (const ligne of corps.split("\n")) {
+    reponse.write(`data: ${ligne}\n`);
+  }
+
+  reponse.write("\n");
+}
+
+function diffuserEvenementTempsReel(flux, evenement, donnees) {
+  for (const connexion of Array.from(flux)) {
+    envoyerEvenementTempsReel(connexion.reponse, evenement, donnees);
+  }
+}
+
+function publierEvenementMarchand(evenement, donnees) {
+  diffuserEvenementTempsReel(fluxTempsReelMarchand, evenement, {
+    type: evenement,
+    date: new Date().toISOString(),
+    ...(donnees || {}),
+  });
+}
+
+function publierChangementPaiement(evenement, paiement) {
+  if (!paiement) {
+    return;
+  }
+
+  const donneesCommunes = {
+    type: evenement,
+    idPaiement: paiement.id,
+    idCommande: paiement.idCommande,
+    statut: paiement.statut,
+    section: sectionPaiementMarchand(paiement),
+    modifieLe: paiement.modifieLe,
+  };
+  const donneesMarchand = {
+    ...donneesCommunes,
+    paiement: paiementMarchand(paiement),
+  };
+  const donneesClient = {
+    ...donneesCommunes,
+    paiement: paiementPublic(paiement),
+  };
+  const ciblesPaiement = new Set();
+
+  for (const cle of [paiement.id, paiement.jetonClient].filter(Boolean)) {
+    const flux = fluxTempsReelPaiements.get(cle);
+
+    if (!flux) {
+      continue;
+    }
+
+    for (const connexion of flux) {
+      ciblesPaiement.add(connexion);
+    }
+  }
+
+  publierEvenementMarchand("paiement.maj", donneesMarchand);
+
+  for (const connexion of ciblesPaiement) {
+    envoyerEvenementTempsReel(connexion.reponse, "paiement.maj", donneesClient);
+  }
+}
+
+function publierThemeInterfaceTempsReel(themeInterface) {
+  const theme = donneesThemeInterface(themeInterface);
+
+  publierEvenementMarchand("theme.modifie", theme);
+  diffuserEvenementTempsReel(fluxTempsReelPaiementsTous, "theme.modifie", theme);
+}
+
+function donneesThemeInterface(themeInterface) {
+  const codeTheme = valeurThemeInterface(themeInterface);
+
+  return {
+    themeInterface: codeTheme,
+    css: styleThemeInterface(codeTheme),
+  };
+}
+
+function sectionPaiementMarchand(paiement) {
+  if (!paiement) {
+    return "inconnue";
+  }
+
+  if (paiement.statut === STATUTS_PAIEMENT.PAYE || paiement.statut === STATUTS_PAIEMENT.REFUSE) {
+    return "finalisees";
+  }
+
+  if (paiement.statut === STATUTS_PAIEMENT.ABANDONNE) {
+    return "abandonnes";
+  }
+
+  if (paiement.preuve && paiement.verification) {
+    return "a-controler";
+  }
+
+  return "en-attente";
+}
+
+function requeteAttendJson(requete) {
+  const accept = String(requete.headers.accept || "").toLowerCase();
+  const typeContenu = String(requete.headers["content-type"] || "").toLowerCase();
+
+  return accept.includes("application/json") || typeContenu.includes("application/json");
 }
 
 async function creerPaiement(corps, requete) {
@@ -656,6 +968,7 @@ async function creerPaiement(corps, requete) {
   paiement.urlPaiement = `${obtenirUrlBaseApplication(configuration)}/paiement/${paiement.jetonClient}`;
 
   await creerPaiementEnBase(paiement);
+  publierChangementPaiement("paiement.cree", paiement);
 
   return { ok: true, paiement: paiementMarchand(paiement) };
 }
@@ -789,6 +1102,7 @@ async function envoyerPreuve(identifiantPaiement, corps) {
   try {
     fs.writeFileSync(cheminPreuve, image);
     await mettreAJourPaiementEnBase(paiementMisAJour);
+    publierChangementPaiement("preuve.recue", paiementMisAJour);
   } catch (erreur) {
     supprimerFichierSiPossible(cheminPreuve);
 
@@ -839,6 +1153,7 @@ async function abandonnerPaiement(identifiantPaiement) {
     });
 
     await mettreAJourPaiementEnBase(paiement);
+    publierChangementPaiement("paiement.abandonne", paiement);
   }
 
   return {
@@ -954,6 +1269,7 @@ async function prendreDecisionPaiement(idPaiement, decision) {
   }
 
   const paiementActualise = (await trouverPaiement(idDecision)) || (await trouverPaiement(idPaiement));
+  publierChangementPaiement(decision.evenement, paiementActualise);
   return reponseDecision(paiementActualise, decision.messageRetour, false);
 }
 
@@ -1019,6 +1335,7 @@ async function renvoyerNotificationPaiement(idPaiement) {
   }
 
   const paiementActualise = await trouverPaiement(idPaiement);
+  publierChangementPaiement("webhook.renvoye", paiementActualise);
 
   return {
     ok: true,
@@ -1026,6 +1343,123 @@ async function renvoyerNotificationPaiement(idPaiement) {
     paiement: paiementPublic(paiementActualise),
     webhook: resumerWebhook(paiementActualise),
   };
+}
+
+async function supprimerPaiementsHistoriqueMarchand(idsPaiements) {
+  const idsSelectionnes = normaliserIdsPaiementsSelectionnes(idsPaiements);
+
+  if (idsSelectionnes.length === 0) {
+    return {
+      supprimes: 0,
+      ignores: 0,
+      idsSupprimes: [],
+      fichiersPreuvesSupprimes: 0,
+    };
+  }
+
+  const client = await poolBase.connect();
+  let resultatSuppression = {
+    supprimes: 0,
+    ignores: idsSelectionnes.length,
+    idsSupprimes: [],
+    fichiersPreuves: [],
+  };
+
+  try {
+    await client.query("begin");
+    const resultat = await client.query(
+      "select * from paiements where id = any($1::text[]) for update",
+      [idsSelectionnes]
+    );
+    const paiements = resultat.rows.map(convertirLignePaiement);
+    const paiementsSupprimables = paiements.filter((paiement) => {
+      return statutHistoriqueSupprimable(paiement.statut);
+    });
+    const idsSupprimables = paiementsSupprimables.map((paiement) => paiement.id);
+
+    if (idsSupprimables.length > 0) {
+      await client.query("delete from paiements where id = any($1::text[])", [idsSupprimables]);
+    }
+
+    await client.query("commit");
+    resultatSuppression = {
+      supprimes: idsSupprimables.length,
+      ignores: idsSelectionnes.length - idsSupprimables.length,
+      idsSupprimes: idsSupprimables,
+      fichiersPreuves: nomsFichiersPreuvesPaiements(paiementsSupprimables),
+    };
+  } catch (erreur) {
+    await client.query("rollback");
+    throw erreur;
+  } finally {
+    client.release();
+  }
+
+  return {
+    supprimes: resultatSuppression.supprimes,
+    ignores: resultatSuppression.ignores,
+    idsSupprimes: resultatSuppression.idsSupprimes,
+    fichiersPreuvesSupprimes: supprimerFichiersPreuvesPaiements(resultatSuppression.fichiersPreuves),
+  };
+}
+
+function statutHistoriqueSupprimable(statut) {
+  return STATUTS_HISTORIQUE_SUPPRIMABLES.has(statut);
+}
+
+function normaliserIdsPaiementsSelectionnes(valeur) {
+  const valeurs = Array.isArray(valeur) ? valeur : [valeur];
+  const ids = [];
+
+  for (const element of valeurs) {
+    const morceaux = String(element || "").split(",");
+
+    for (const morceau of morceaux) {
+      const id = morceau.trim();
+
+      if (id) {
+        ids.push(id);
+      }
+    }
+  }
+
+  return Array.from(new Set(ids)).slice(0, 1000);
+}
+
+function nomsFichiersPreuvesPaiements(paiements) {
+  const noms = [];
+
+  for (const paiement of paiements) {
+    const nomFichier = paiement.preuve && paiement.preuve.nomFichierStocke;
+
+    if (nomFichier) {
+      noms.push(path.basename(nomFichier));
+    }
+  }
+
+  return Array.from(new Set(noms));
+}
+
+function supprimerFichiersPreuvesPaiements(nomsFichiers) {
+  let total = 0;
+
+  for (const nomFichier of nomsFichiers) {
+    const nomSur = path.basename(nomFichier || "");
+
+    if (!nomSur) {
+      continue;
+    }
+
+    const cheminPreuve = path.join(dossierPreuves, nomSur);
+    const existait = fs.existsSync(cheminPreuve);
+    supprimerFichierSiPossible(cheminPreuve);
+
+    if (existait && !fs.existsSync(cheminPreuve)) {
+      total += 1;
+    }
+  }
+
+  return total;
 }
 
 function reponseDecision(paiement, message, dejaTraite) {
@@ -1646,6 +2080,7 @@ async function marquerPaiementEnAttente(paiement) {
   });
 
   await mettreAJourPaiementEnBase(paiement);
+  publierChangementPaiement("paiement.en_attente", paiement);
   return paiement;
 }
 
@@ -1809,6 +2244,7 @@ async function traiterNotificationWebhook(idNotification) {
     [notification.id_paiement, JSON.stringify(dernierWebhook)]
   );
 
+  publierChangementPaiement("webhook.maj", await trouverPaiement(notification.id_paiement));
   return dernierWebhook;
 }
 
@@ -2533,7 +2969,17 @@ function lireCorpsFormulaire(requete) {
     const donnees = {};
 
     for (const [cle, valeur] of parametres.entries()) {
-      donnees[cle] = valeur;
+      if (donnees[cle] === undefined) {
+        donnees[cle] = valeur;
+        continue;
+      }
+
+      if (Array.isArray(donnees[cle])) {
+        donnees[cle].push(valeur);
+        continue;
+      }
+
+      donnees[cle] = [donnees[cle], valeur];
     }
 
     return donnees;

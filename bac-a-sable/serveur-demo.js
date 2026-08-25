@@ -22,6 +22,8 @@ const urlSandboxPublicDemarrage = process.env.URL_SANDBOX_PUBLIC || `http://loca
 const dossierDonnees = path.join(__dirname, "donnees");
 const fichierCommandes = path.join(dossierDonnees, "commandes.json");
 const TAILLE_MAX_CORPS = 1024 * 1024;
+const fluxTempsReelSandbox = new Set();
+let themeSandboxCourant = "";
 
 const offres = [
   {
@@ -54,6 +56,28 @@ const serveur = http.createServer(async (requete, reponse) => {
 
     if (requete.method === "GET" && url.pathname === "/commandes") {
       return envoyerJson(reponse, 200, chargerCommandes());
+    }
+
+    if (requete.method === "GET" && url.pathname === "/fragments") {
+      return envoyerJson(reponse, 200, await fragmentsAccueilSandbox());
+    }
+
+    if (requete.method === "GET" && url.pathname === "/evenements") {
+      return ouvrirFluxTempsReelSandbox(requete, reponse);
+    }
+
+    if (requete.method === "POST" && url.pathname === "/commandes/vider") {
+      viderHistoriqueCommandes();
+
+      if (requeteAttendJson(requete)) {
+        return envoyerJson(reponse, 200, {
+          message: "Historique sandbox vide.",
+          ...(await fragmentsAccueilSandbox()),
+        });
+      }
+
+      reponse.writeHead(303, { location: "/?historique=vide" });
+      return reponse.end();
     }
 
     if (requete.method === "POST" && url.pathname === "/commander") {
@@ -108,6 +132,26 @@ serveur.listen(port, () => {
   console.log(`Adresse a ouvrir sur cette machine: ${urlOuverte}`);
   console.log("API paiement et webhook lus depuis la configuration marchand.");
 });
+
+const minuteurThemeSandbox = setInterval(() => {
+  surveillerThemeSandbox().catch((erreur) => {
+    console.error("Surveillance theme sandbox indisponible:", erreur.message);
+  });
+}, 5_000);
+
+setTimeout(() => {
+  surveillerThemeSandbox().catch((erreur) => {
+    console.error("Initialisation theme sandbox indisponible:", erreur.message);
+  });
+}, 500);
+
+process.on("SIGINT", arreterServeurSandbox);
+process.on("SIGTERM", arreterServeurSandbox);
+
+function arreterServeurSandbox() {
+  clearInterval(minuteurThemeSandbox);
+  serveur.close(() => process.exit(0));
+}
 
 async function chargerConfigurationSandbox() {
   try {
@@ -324,8 +368,9 @@ async function afficherAccueil(parametres) {
   const optionsInterface = optionsInterfaceSandbox(configuration);
   traiterRetourClient(parametres, commandes);
   const cartesOffres = offres.map(afficherOffre).join("");
-  const lignesCommandes = commandes.map(afficherCommande).join("");
   const messageRetour = afficherMessageRetour(parametres, commandes);
+  const messageHistorique = afficherMessageHistoriqueSandbox(parametres);
+  const fragmentsCommandes = afficherFragmentsCommandesSandbox(commandes);
 
   return pageHtml("Site marchand de test", `
     <main>
@@ -340,16 +385,300 @@ async function afficherAccueil(parametres) {
       </section>
 
       ${messageRetour}
+      ${messageHistorique}
 
       <section class="bloc">
         <div class="titre-ligne">
           <h2>Commandes de test</h2>
-          <a href="/">Actualiser</a>
+          <div id="actionsCommandesSandbox" class="actions-titre">
+            ${fragmentsCommandes.actionsHtml}
+          </div>
         </div>
-        ${lignesCommandes || "<p>Aucune commande de test pour le moment.</p>"}
+        <p id="messageSandbox" class="message-action-sandbox" hidden></p>
+        <div id="listeCommandesSandbox" class="liste-commandes-sandbox">
+          ${fragmentsCommandes.commandesHtml}
+        </div>
       </section>
     </main>
+    ${afficherModaleConfirmationSandbox()}
+    ${afficherScriptConfirmationSandbox()}
   `, optionsInterface);
+}
+
+async function fragmentsAccueilSandbox() {
+  const configuration = await chargerConfigurationSandbox();
+  const optionsInterface = optionsInterfaceSandbox(configuration);
+
+  return {
+    ...afficherFragmentsCommandesSandbox(chargerCommandes()),
+    theme: donneesThemeSandbox(optionsInterface.themeInterface),
+  };
+}
+
+function afficherFragmentsCommandesSandbox(commandes) {
+  return {
+    actionsHtml: afficherActionsCommandesSandbox(commandes),
+    commandesHtml: afficherListeCommandesSandbox(commandes),
+  };
+}
+
+function afficherActionsCommandesSandbox(commandes) {
+  return `
+    <a href="/">Actualiser</a>
+    ${commandes.length > 0
+      ? `
+        <form
+          method="post"
+          action="/commandes/vider"
+          data-confirmation-action
+          data-formulaire-ajax
+          data-confirmation-badge="Nettoyage sandbox"
+          data-confirmation-titre="Vider l'historique"
+          data-confirmation-texte="Vider definitivement l'historique des commandes de test ?"
+          data-confirmation-bouton="Vider"
+          data-confirmation-classe="bouton-danger"
+        >
+          <button type="submit" class="bouton-danger">Vider l'historique</button>
+        </form>
+      `
+      : ""}
+  `;
+}
+
+function afficherListeCommandesSandbox(commandes) {
+  const lignesCommandes = commandes.map(afficherCommande).join("");
+
+  return lignesCommandes || "<p>Aucune commande de test pour le moment.</p>";
+}
+
+function afficherModaleConfirmationSandbox() {
+  return `
+    <div id="modaleConfirmationAction" class="modale" hidden role="dialog" aria-modal="true" aria-labelledby="titreModaleConfirmation">
+      <div class="modale-fond" data-fermer-confirmation></div>
+      <section class="modale-contenu" tabindex="-1">
+        <p id="badgeModaleConfirmation" class="badge">Confirmation</p>
+        <h2 id="titreModaleConfirmation">Confirmer l'action</h2>
+        <p id="texteModaleConfirmation"></p>
+        <div class="actions-modale">
+          <button type="button" class="bouton-secondaire" data-annuler-confirmation>Annuler</button>
+          <button type="button" id="boutonConfirmerAction">Confirmer</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function afficherScriptConfirmationSandbox() {
+  return `
+    <script>
+      const modaleConfirmationAction = document.getElementById("modaleConfirmationAction");
+      const badgeModaleConfirmation = document.getElementById("badgeModaleConfirmation");
+      const titreModaleConfirmation = document.getElementById("titreModaleConfirmation");
+      const texteModaleConfirmation = document.getElementById("texteModaleConfirmation");
+      const boutonConfirmerAction = document.getElementById("boutonConfirmerAction");
+      const boutonAnnulerConfirmation = modaleConfirmationAction.querySelector("[data-annuler-confirmation]");
+      const fondConfirmation = modaleConfirmationAction.querySelector("[data-fermer-confirmation]");
+      const messageSandbox = document.getElementById("messageSandbox");
+      let formulaireConfirmationActif = null;
+      let rafraichissementSandboxEnCours = false;
+      let rafraichissementSandboxEnAttente = false;
+      let minuteurRafraichissementSandbox = null;
+
+      initialiserTempsReelSandbox();
+      document.addEventListener("submit", gererConfirmationAction);
+      document.addEventListener("keydown", gererToucheConfirmation);
+      boutonAnnulerConfirmation.addEventListener("click", () => fermerConfirmationAction(false));
+      fondConfirmation.addEventListener("click", () => fermerConfirmationAction(false));
+      boutonConfirmerAction.addEventListener("click", () => fermerConfirmationAction(true));
+
+      function gererConfirmationAction(evenement) {
+        const formulaire = evenement.target.closest("form[data-confirmation-action]");
+
+        if (!formulaire || formulaire.dataset.confirmationValidee === "1") {
+          return;
+        }
+
+        evenement.preventDefault();
+        formulaireConfirmationActif = formulaire;
+        badgeModaleConfirmation.textContent = formulaire.dataset.confirmationBadge || "Confirmation";
+        titreModaleConfirmation.textContent = formulaire.dataset.confirmationTitre || "Confirmer l'action";
+        texteModaleConfirmation.textContent = formulaire.dataset.confirmationTexte || "Confirmer cette action ?";
+        boutonConfirmerAction.textContent = formulaire.dataset.confirmationBouton || "Confirmer";
+        boutonConfirmerAction.className = formulaire.dataset.confirmationClasse || "";
+        modaleConfirmationAction.hidden = false;
+        window.setTimeout(() => boutonConfirmerAction.focus(), 0);
+      }
+
+      function fermerConfirmationAction(confirmee) {
+        const formulaire = formulaireConfirmationActif;
+        formulaireConfirmationActif = null;
+        modaleConfirmationAction.hidden = true;
+
+        if (!confirmee || !formulaire) {
+          return;
+        }
+
+        formulaire.dataset.confirmationValidee = "1";
+
+        if (formulaire.dataset.formulaireAjax !== undefined) {
+          envoyerFormulaireAjax(formulaire);
+          return;
+        }
+
+        formulaire.submit();
+      }
+
+      function gererToucheConfirmation(evenement) {
+        if (modaleConfirmationAction.hidden || evenement.key !== "Escape") {
+          return;
+        }
+
+        evenement.preventDefault();
+        fermerConfirmationAction(false);
+      }
+
+      async function envoyerFormulaireAjax(formulaire) {
+        afficherMessageSandbox("Action en cours...", "info");
+
+        try {
+          const reponse = await fetch(formulaire.action, {
+            method: formulaire.method || "POST",
+            headers: {
+              "accept": "application/json",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams(new FormData(formulaire))
+          });
+          const resultat = await lireJson(reponse);
+
+          formulaire.dataset.confirmationValidee = "";
+
+          if (!reponse.ok) {
+            afficherMessageSandbox(resultat.message || "Action impossible.", "erreur");
+            return;
+          }
+
+          appliquerFragmentsSandbox(resultat);
+          afficherMessageSandbox(resultat.message || "Historique mis a jour.", "succes");
+        } catch {
+          formulaire.dataset.confirmationValidee = "";
+          afficherMessageSandbox("Connexion indisponible. Action non appliquee.", "erreur");
+        }
+      }
+
+      function initialiserTempsReelSandbox() {
+        if (!window.EventSource) {
+          return;
+        }
+
+        const source = new EventSource("/evenements");
+
+        source.addEventListener("commandes.maj", () => {
+          planifierRafraichissementSandbox();
+        });
+        source.addEventListener("theme.modifie", appliquerThemeTempsReelDepuisEvenement);
+      }
+
+      function planifierRafraichissementSandbox() {
+        window.clearTimeout(minuteurRafraichissementSandbox);
+        minuteurRafraichissementSandbox = window.setTimeout(() => {
+          rafraichirSandbox();
+        }, 250);
+      }
+
+      async function rafraichirSandbox() {
+        if (rafraichissementSandboxEnCours) {
+          rafraichissementSandboxEnAttente = true;
+          return;
+        }
+
+        rafraichissementSandboxEnCours = true;
+
+        try {
+          const reponse = await fetch("/fragments", {
+            headers: { "accept": "application/json" }
+          });
+          const fragments = await lireJson(reponse);
+
+          if (!reponse.ok) {
+            throw new Error(fragments.message || "Fragments indisponibles.");
+          }
+
+          appliquerFragmentsSandbox(fragments);
+        } catch {
+          afficherMessageSandbox("Mise a jour temps reel indisponible.", "avertissement");
+        } finally {
+          rafraichissementSandboxEnCours = false;
+
+          if (rafraichissementSandboxEnAttente) {
+            rafraichissementSandboxEnAttente = false;
+            planifierRafraichissementSandbox();
+          }
+        }
+      }
+
+      function appliquerFragmentsSandbox(fragments) {
+        if (!fragments || typeof fragments !== "object") {
+          return;
+        }
+
+        remplacerHtmlElement("actionsCommandesSandbox", fragments.actionsHtml);
+        remplacerHtmlElement("listeCommandesSandbox", fragments.commandesHtml);
+        appliquerThemeTempsReel(fragments.theme);
+      }
+
+      function remplacerHtmlElement(idElement, html) {
+        const element = document.getElementById(idElement);
+
+        if (element && typeof html === "string") {
+          element.innerHTML = html;
+        }
+      }
+
+      function appliquerThemeTempsReelDepuisEvenement(evenement) {
+        try {
+          const donnees = JSON.parse(evenement.data);
+          appliquerThemeTempsReel(donnees.theme || donnees);
+        } catch {
+          return;
+        }
+      }
+
+      function appliquerThemeTempsReel(theme) {
+        if (!theme || !theme.css) {
+          return;
+        }
+
+        const styleTheme = document.getElementById("styleThemeInterfaceTempsReel");
+
+        if (styleTheme) {
+          styleTheme.textContent = theme.css;
+        }
+
+        if (theme.themeInterface) {
+          document.body.dataset.themeInterface = theme.themeInterface;
+        }
+      }
+
+      async function lireJson(reponse) {
+        try {
+          return await reponse.json();
+        } catch {
+          return { message: "Reponse invalide." };
+        }
+      }
+
+      function afficherMessageSandbox(message, type) {
+        if (!messageSandbox) {
+          return;
+        }
+
+        messageSandbox.textContent = message;
+        messageSandbox.className = "message-action-sandbox " + (type || "info");
+        messageSandbox.hidden = false;
+      }
+    </script>
+  `;
 }
 
 function afficherOffre(offre) {
@@ -399,6 +728,20 @@ function afficherMessageRetour(parametres, commandes) {
       <h2>Paiement en controle</h2>
       <p>La commande sera mise a jour apres decision.</p>
       ${detailCommande}
+    </section>
+  `;
+}
+
+function afficherMessageHistoriqueSandbox(parametres) {
+  if (!parametres || parametres.get("historique") !== "vide") {
+    return "";
+  }
+
+  return `
+    <section class="bloc message-nettoyage">
+      <p class="badge badge-neutre">Historique nettoye</p>
+      <h2>Commandes de test videes</h2>
+      <p>L'historique du site sandbox a ete supprime. Les scripts de nettoyage restent disponibles pour repartir d'un environnement totalement propre.</p>
     </section>
   `;
 }
@@ -566,6 +909,102 @@ function optionsInterfaceSandbox(configuration) {
   };
 }
 
+function ouvrirFluxTempsReelSandbox(requete, reponse) {
+  const flux = ouvrirFluxTempsReel(requete, reponse, () => {
+    fluxTempsReelSandbox.delete(flux);
+  });
+
+  fluxTempsReelSandbox.add(flux);
+  envoyerEvenementTempsReel(reponse, "temps-reel.pret", {
+    zone: "sandbox",
+    date: new Date().toISOString(),
+  });
+}
+
+function ouvrirFluxTempsReel(requete, reponse, nettoyer) {
+  reponse.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  reponse.write("retry: 3000\n\n");
+
+  const flux = { reponse };
+  const minuteur = setInterval(() => {
+    if (!reponse.destroyed && !reponse.writableEnded) {
+      reponse.write(": ping\n\n");
+    }
+  }, 25_000);
+
+  requete.on("close", () => {
+    clearInterval(minuteur);
+    nettoyer(flux);
+  });
+
+  return flux;
+}
+
+function envoyerEvenementTempsReel(reponse, evenement, donnees) {
+  if (!reponse || reponse.destroyed || reponse.writableEnded) {
+    return;
+  }
+
+  const corps = JSON.stringify(donnees || {});
+  reponse.write(`event: ${evenement}\n`);
+
+  for (const ligne of corps.split("\n")) {
+    reponse.write(`data: ${ligne}\n`);
+  }
+
+  reponse.write("\n");
+}
+
+function publierEvenementSandbox(evenement, donnees) {
+  const chargeUtile = {
+    type: evenement,
+    date: new Date().toISOString(),
+    ...(donnees || {}),
+  };
+
+  for (const connexion of Array.from(fluxTempsReelSandbox)) {
+    envoyerEvenementTempsReel(connexion.reponse, evenement, chargeUtile);
+  }
+}
+
+async function surveillerThemeSandbox() {
+  const configuration = await chargerConfigurationSandbox();
+  const themeInterface = valeurThemeInterface(valeurConfiguration(configuration, "THEME_INTERFACE", "paie_clair"));
+
+  if (!themeSandboxCourant) {
+    themeSandboxCourant = themeInterface;
+    return;
+  }
+
+  if (themeSandboxCourant === themeInterface) {
+    return;
+  }
+
+  themeSandboxCourant = themeInterface;
+  publierEvenementSandbox("theme.modifie", donneesThemeSandbox(themeInterface));
+}
+
+function donneesThemeSandbox(themeInterface) {
+  const codeTheme = valeurThemeInterface(themeInterface);
+
+  return {
+    themeInterface: codeTheme,
+    css: styleThemeInterface(codeTheme),
+  };
+}
+
+function requeteAttendJson(requete) {
+  const accept = String(requete.headers.accept || "").toLowerCase();
+  const typeContenu = String(requete.headers["content-type"] || "").toLowerCase();
+
+  return accept.includes("application/json") || typeContenu.includes("application/json");
+}
+
 function pageHtml(titre, contenu, options = {}) {
   const themeInterface = valeurThemeInterface(options.themeInterface || process.env.THEME_INTERFACE);
 
@@ -575,13 +1014,18 @@ function pageHtml(titre, contenu, options = {}) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${echapperHtml(titre)}</title>
-  <style>
+  <style id="styleThemeInterfaceTempsReel">
     ${styleThemeInterface(themeInterface)}
+  </style>
+  <style>
     body {
       margin: 0;
       font-family: Arial, sans-serif;
       color: var(--couleur-texte);
       background: var(--couleur-fond);
+    }
+    [hidden] {
+      display: none !important;
     }
     main {
       width: min(1040px, calc(100% - 32px));
@@ -648,6 +1092,52 @@ function pageHtml(titre, contenu, options = {}) {
       color: var(--couleur-secondaire-texte);
       background: var(--couleur-secondaire);
     }
+    button.bouton-danger {
+      color: var(--couleur-danger-texte);
+      background: var(--couleur-danger);
+    }
+    .actions-titre {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .actions-titre form {
+      margin: 0;
+    }
+    .modale {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .modale-fond {
+      position: absolute;
+      inset: 0;
+      background: var(--couleur-voile-modal);
+    }
+    .modale-contenu {
+      position: relative;
+      width: min(480px, 100%);
+      padding: 22px;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 8px;
+      background: var(--couleur-surface);
+      box-shadow: 0 18px 50px var(--ombre-interface);
+    }
+    .modale-contenu h2 {
+      margin-bottom: 8px;
+    }
+    .actions-modale {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
     .actions-commande {
       display: flex;
       align-items: center;
@@ -671,6 +1161,41 @@ function pageHtml(titre, contenu, options = {}) {
     .message-retour {
       border-color: var(--couleur-attente-bordure);
       background: var(--couleur-attente-fond);
+    }
+    .message-nettoyage {
+      border-color: var(--couleur-succes-bordure);
+      background: var(--couleur-succes-fond);
+    }
+    .message-action-sandbox {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border: 1px solid var(--couleur-bordure);
+      border-radius: 6px;
+      color: var(--couleur-texte);
+      background: var(--couleur-surface-alt);
+      font-weight: 700;
+    }
+    .message-action-sandbox.succes {
+      color: var(--couleur-succes);
+      border-color: var(--couleur-succes-bordure);
+      background: var(--couleur-succes-fond);
+    }
+    .message-action-sandbox.erreur {
+      color: var(--couleur-erreur);
+      border-color: var(--couleur-erreur-bordure);
+      background: var(--couleur-erreur-fond);
+    }
+    .message-action-sandbox.avertissement,
+    .message-action-sandbox.info {
+      color: var(--couleur-attente);
+      border-color: var(--couleur-attente-bordure);
+      background: var(--couleur-attente-fond);
+    }
+    .liste-commandes-sandbox {
+      max-height: min(560px, 70vh);
+      overflow-y: auto;
+      padding-right: 6px;
+      scrollbar-gutter: stable;
     }
     .commande p {
       margin-bottom: 4px;
@@ -718,6 +1243,21 @@ function pageHtml(titre, contenu, options = {}) {
       .grille, .titre-ligne, .commande {
         display: block;
       }
+      .actions-titre {
+        justify-content: stretch;
+        margin-top: 12px;
+      }
+      .actions-titre a,
+      .actions-titre form,
+      .actions-titre button,
+      .actions-modale button {
+        width: 100%;
+        box-sizing: border-box;
+        text-align: center;
+      }
+      .actions-modale {
+        display: grid;
+      }
     }
   </style>
 </head>
@@ -763,6 +1303,13 @@ function chargerCommandes() {
 
 function enregistrerCommandes(commandes) {
   fs.writeFileSync(fichierCommandes, JSON.stringify(commandes, null, 2));
+  publierEvenementSandbox("commandes.maj", {
+    total: Array.isArray(commandes) ? commandes.length : 0,
+  });
+}
+
+function viderHistoriqueCommandes() {
+  enregistrerCommandes([]);
 }
 
 function preparerStockage() {

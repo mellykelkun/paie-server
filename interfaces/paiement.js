@@ -129,6 +129,9 @@ function afficherPaiement(paiement, options = {}) {
       const tailleMaxPreuve = 5 * 1024 * 1024;
       const typesAutorises = ["image/png", "image/jpeg", "image/webp"];
       let urlApercu = "";
+      let envoiPreuveEnCours = false;
+
+      initialiserTempsReelPaiement();
 
       champFichier.addEventListener("change", () => {
         const fichier = champFichier.files[0];
@@ -187,6 +190,7 @@ function afficherPaiement(paiement, options = {}) {
             return;
           }
 
+          envoiPreuveEnCours = true;
           const imageBase64 = await convertirFichierEnBase64(fichier);
 
           const reponse = await fetch("/api/paiements/${encodeURIComponent(paiement.jetonClient || paiement.jetonPaiement || paiement.id)}/preuve", {
@@ -218,6 +222,7 @@ function afficherPaiement(paiement, options = {}) {
 
           window.location.href = "/paiement/" + encodeURIComponent(jetonPaiement) + "/preuve-envoyee";
         } catch {
+          envoiPreuveEnCours = false;
           redirigerEchec("Connexion indisponible. Veuillez reessayer.", "CONNEXION_INDISPONIBLE");
         }
       });
@@ -237,6 +242,86 @@ function afficherPaiement(paiement, options = {}) {
       function verrouillerFormulaire() {
         for (const element of formulaire.elements) {
           element.disabled = true;
+        }
+      }
+
+      function initialiserTempsReelPaiement() {
+        if (!window.EventSource) {
+          return;
+        }
+
+        const source = new EventSource("/api/temps-reel/paiements/" + encodeURIComponent(jetonPaiement));
+        const gererPaiement = (evenement) => {
+          try {
+            const donnees = JSON.parse(evenement.data);
+            actualiserEtatPaiement(donnees.paiement);
+          } catch {
+            return;
+          }
+        };
+
+        source.addEventListener("paiement.snapshot", gererPaiement);
+        source.addEventListener("paiement.maj", gererPaiement);
+        source.addEventListener("theme.modifie", appliquerThemeTempsReelDepuisEvenement);
+      }
+
+      function actualiserEtatPaiement(paiement) {
+        if (!paiement || !paiement.statut) {
+          return;
+        }
+
+        texteStatut.textContent = libelleStatut(paiement.statut);
+
+        if (envoiPreuveEnCours) {
+          return;
+        }
+
+        if (paiement.preuve || paiement.statut === "PREUVE_ENVOYEE" || paiement.statut === "EN_VERIFICATION") {
+          verrouillerFormulaire();
+          message.textContent = "Justificatif recu. Le marchand va le verifier.";
+          return;
+        }
+
+        if (paiement.statut === "PAYE") {
+          verrouillerFormulaire();
+          message.textContent = "Paiement deja confirme par le marchand.";
+          return;
+        }
+
+        if (paiement.statut === "REFUSE") {
+          verrouillerFormulaire();
+          message.textContent = "Paiement refuse. Contactez le marchand si besoin.";
+          return;
+        }
+
+        if (paiement.statut === "ABANDONNE") {
+          verrouillerFormulaire();
+          message.textContent = "Ce paiement n'est plus actif.";
+        }
+      }
+
+      function appliquerThemeTempsReelDepuisEvenement(evenement) {
+        try {
+          const donnees = JSON.parse(evenement.data);
+          appliquerThemeTempsReel(donnees.theme || donnees);
+        } catch {
+          return;
+        }
+      }
+
+      function appliquerThemeTempsReel(theme) {
+        if (!theme || !theme.css) {
+          return;
+        }
+
+        const styleTheme = document.getElementById("styleThemeInterfaceTempsReel");
+
+        if (styleTheme) {
+          styleTheme.textContent = theme.css;
+        }
+
+        if (theme.themeInterface) {
+          document.body.dataset.themeInterface = theme.themeInterface;
         }
       }
 

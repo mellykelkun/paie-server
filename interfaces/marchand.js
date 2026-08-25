@@ -1,39 +1,8 @@
 const { pageHtml, echapperHtml, formaterMontant } = require("./commun");
 
 function afficherMarchand(paiements, options = {}) {
-  const paiementsTries = [...paiements].sort((a, b) => b.creeLe.localeCompare(a.creeLe));
-  const paiementsFinalises = paiementsTries.filter((paiement) => {
-    return paiement.statut === "PAYE" || paiement.statut === "REFUSE";
-  });
-  const paiementsAbandonnes = paiementsTries.filter((paiement) => paiement.statut === "ABANDONNE");
-  const paiementsAControler = paiementsTries.filter((paiement) => {
-    return Boolean(
-      paiement.preuve &&
-      paiement.verification &&
-      paiement.statut !== "PAYE" &&
-      paiement.statut !== "REFUSE" &&
-      paiement.statut !== "ABANDONNE"
-    );
-  });
-  const paiementsEnAttente = paiementsTries.filter((paiement) => {
-    return (
-      paiement.statut !== "ABANDONNE" &&
-      paiement.statut !== "PAYE" &&
-      paiement.statut !== "REFUSE" &&
-      (!paiement.preuve || !paiement.verification)
-    );
-  });
-  const lignesAControler = paiementsAControler.map(afficherLignePaiement).join("");
-  const lignesEnAttente = paiementsEnAttente.map(afficherLignePaiement).join("");
-  const lignesFinalisees = paiementsFinalises.map(afficherLignePaiement).join("");
-  const lignesAbandonnees = paiementsAbandonnes.map(afficherLignePaiement).join("");
-  const statistiques = construireStatistiquesMarchand({
-    paiements: paiementsTries,
-    paiementsAControler,
-    paiementsEnAttente,
-    paiementsFinalises,
-    paiementsAbandonnes,
-  });
+  const donnees = preparerDonneesMarchand(paiements);
+  const fragments = afficherFragmentsMarchandDepuisDonnees(donnees);
 
   return pageHtml("Tableau marchand", `
     <main class="tableau-marchand">
@@ -44,6 +13,7 @@ function afficherMarchand(paiements, options = {}) {
           <p>Suivi rapide des paiements manuels, justificatifs, decisions et notifications.</p>
         </div>
         <div class="actions actions-entete-marchand">
+          <a class="bouton-lien secondaire" href="/marchand/documentation">Documentation</a>
           <a class="bouton-lien secondaire" href="/marchand/configuration">Configuration</a>
           <form method="post" action="/marchand/deconnexion">
             <button type="submit" class="bouton-secondaire">Deconnexion</button>
@@ -51,58 +21,17 @@ function afficherMarchand(paiements, options = {}) {
         </div>
       </header>
 
-      <section class="resume-marchand" aria-label="Resume marchand">
-        ${statistiques.map(afficherCarteStatistique).join("")}
+      <section id="resumeMarchand" class="resume-marchand" aria-label="Resume marchand">
+        ${fragments.resumeHtml}
       </section>
 
+      ${afficherRetourSuppressionHistorique(options)}
       <p id="messageAction" class="retour-action" hidden></p>
 
-      <section class="section-marchand section-prioritaire">
-        <div class="entete-section-marchand">
-          <div>
-            <p class="sur-titre">Priorite</p>
-            <h2>Justificatifs a controler</h2>
-          </div>
-          ${afficherCompteurSection(paiementsAControler.length)}
-        </div>
-        <p class="description-section">Paiements avec recu recu. Verifiez votre compte de paiement, puis acceptez ou refusez.</p>
-        <div class="liste-paiements-marchand">
-          ${lignesAControler || afficherEtatVide("Aucun justificatif a controler", "Les nouvelles preuves apparaitront ici des leur reception.")}
-        </div>
-      </section>
-
-      <details class="section-marchand" ${paiementsAControler.length === 0 ? "open" : ""}>
-        <summary>
-          <span>Paiements en attente du justificatif</span>
-          ${afficherCompteurSection(paiementsEnAttente.length)}
-        </summary>
-        <p class="description-section">Paiements crees ou ouverts par le client, mais sans recu valide envoye. Aucune decision marchand n'est attendue ici.</p>
-        <div class="liste-paiements-marchand">
-          ${lignesEnAttente || afficherEtatVide("Aucun paiement en attente", "Les paiements sans preuve seront regroupes ici.")}
-        </div>
-      </details>
-
-      <details class="section-marchand">
-        <summary>
-          <span>Decisions finales</span>
-          ${afficherCompteurSection(paiementsFinalises.length)}
-        </summary>
-        <p class="description-section">Paiements deja acceptes ou refuses. Les notifications peuvent etre renvoyees si le site marchand ne les a pas recues.</p>
-        <div class="liste-paiements-marchand">
-          ${lignesFinalisees || afficherEtatVide("Aucune decision finale", "Les paiements acceptes ou refuses apparaitront ici.")}
-        </div>
-      </details>
-
-      <details class="section-marchand">
-        <summary>
-          <span>Paiements abandonnes</span>
-          ${afficherCompteurSection(paiementsAbandonnes.length)}
-        </summary>
-        <p class="description-section">Paiements arretes avant reception d'un justificatif valide, souvent apres annulation ou retour du client vers l'application marchande.</p>
-        <div class="liste-paiements-marchand">
-          ${lignesAbandonnees || afficherEtatVide("Aucun paiement abandonne", "Les abandons client seront archives dans cette section.")}
-        </div>
-      </details>
+      ${fragments.sections.aControler}
+      ${fragments.sections.enAttente}
+      ${fragments.sections.finalisees}
+      ${fragments.sections.abandonnes}
     </main>
 
     <div id="modaleDecision" class="modale" hidden role="dialog" aria-modal="true" aria-labelledby="titreModaleDecision">
@@ -136,13 +65,21 @@ function afficherMarchand(paiements, options = {}) {
       const boutonAnnulerModale = modaleDecision.querySelector("[data-annuler-modale]");
       const fondModale = modaleDecision.querySelector("[data-fermer-modale]");
       let fermetureModaleActive = null;
+      let miseAJourMarchandEnAttente = false;
+      let rafraichissementMarchandEnCours = false;
+      let relanceRafraichissementMarchand = false;
+      let minuteurRafraichissementMarchand = null;
 
       afficherMessageMemorise();
+      initialiserTempsReelMarchand();
       document.addEventListener("click", gererClicDecision);
       document.addEventListener("click", gererClicNotification);
+      document.addEventListener("change", gererSelectionHistorique);
+      document.addEventListener("submit", gererSuppressionHistorique);
       document.addEventListener("keydown", gererToucheModale);
       boutonAnnulerModale.addEventListener("click", () => fermerModaleDecision(false));
       fondModale.addEventListener("click", () => fermerModaleDecision(false));
+      actualiserToutesSelectionsHistorique();
 
       async function gererClicDecision(evenement) {
         const bouton = evenement.target.closest("button[data-action-decision]");
@@ -190,8 +127,8 @@ function afficherMarchand(paiements, options = {}) {
             return;
           }
 
-          memoriserMessageAction(message, type);
-          window.location.reload();
+          afficherMessageAction(message, type);
+          await rafraichirTableauMarchand({ forcer: true });
         } catch {
           afficherMessageAction("Connexion indisponible. La decision n'a pas ete confirmee.", "erreur");
           boutonsPaiement.forEach((element) => {
@@ -225,8 +162,8 @@ function afficherMarchand(paiements, options = {}) {
             return;
           }
 
-          memoriserMessageAction(message, type);
-          window.location.reload();
+          afficherMessageAction(message, type);
+          await rafraichirTableauMarchand({ forcer: true });
         } catch {
           afficherMessageAction("Connexion indisponible. La notification n'a pas ete renvoyee.", "erreur");
           bouton.disabled = false;
@@ -288,10 +225,12 @@ function afficherMarchand(paiements, options = {}) {
           const fermer = fermetureModaleActive;
           fermetureModaleActive = null;
           fermer(confirmee);
+          appliquerMiseAJourEnAttenteSiPossible();
           return;
         }
 
         fermetureModaleActive = null;
+        appliquerMiseAJourEnAttenteSiPossible();
       }
 
       function gererToucheModale(evenement) {
@@ -307,6 +246,291 @@ function afficherMarchand(paiements, options = {}) {
         return Array.from(document.querySelectorAll("button[data-id-paiement]")).filter((bouton) => {
           return bouton.dataset.idPaiement === idPaiement;
         });
+      }
+
+      function gererSelectionHistorique(evenement) {
+        const selectionTout = evenement.target.closest("[data-selection-tout-historique]");
+
+        if (selectionTout) {
+          const formulaire = selectionTout.closest("[data-formulaire-suppression]");
+          const coches = formulaire.querySelectorAll("[data-selection-historique]");
+          coches.forEach((casePaiement) => {
+            casePaiement.checked = selectionTout.checked;
+          });
+          actualiserSelectionHistorique(formulaire);
+          return;
+        }
+
+        if (evenement.target.matches("[data-selection-historique]")) {
+          actualiserSelectionHistorique(evenement.target.closest("[data-formulaire-suppression]"));
+        }
+      }
+
+      async function gererSuppressionHistorique(evenement) {
+        const formulaire = evenement.target.closest("[data-formulaire-suppression]");
+
+        if (!formulaire) {
+          return;
+        }
+
+        evenement.preventDefault();
+        const selection = formulaire.querySelectorAll("[data-selection-historique]:checked");
+
+        if (selection.length === 0) {
+          afficherMessageAction("Selectionnez au moins un element d'historique a supprimer.", "avertissement");
+          return;
+        }
+
+        const texte =
+          selection.length === 1
+            ? "Supprimer definitivement cet element d'historique ?"
+            : "Supprimer definitivement ces " + selection.length + " elements d'historique ?";
+        const confirme = await demanderConfirmationSimple({
+          badge: "Nettoyage historique",
+          titre: "Confirmer la suppression",
+          texte,
+          bouton: "Supprimer",
+          classeBouton: "bouton-danger",
+        });
+
+        if (!confirme) {
+          return;
+        }
+
+        const bouton = formulaire.querySelector("[data-bouton-suppression-historique]");
+
+        if (bouton) {
+          bouton.disabled = true;
+        }
+
+        try {
+          const reponse = await fetch(formulaire.action, {
+            method: "POST",
+            headers: {
+              "accept": "application/json",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams(new FormData(formulaire))
+          });
+          const resultat = await lireJson(reponse);
+
+          if (!reponse.ok) {
+            afficherMessageAction(resultat.message || "Suppression impossible.", "erreur");
+            actualiserSelectionHistorique(formulaire);
+            return;
+          }
+
+          const detailIgnores = resultat.ignores > 0
+            ? " " + resultat.ignores + " paiement(s) conserve(s), car ils ne sont pas supprimables."
+            : "";
+          afficherMessageAction(
+            (resultat.message || "Historique mis a jour.") + detailIgnores,
+            resultat.supprimes > 0 ? "succes" : "avertissement"
+          );
+          await rafraichirTableauMarchand({ forcer: true });
+        } catch {
+          afficherMessageAction("Connexion indisponible. La suppression n'a pas ete faite.", "erreur");
+          actualiserSelectionHistorique(formulaire);
+        }
+      }
+
+      function actualiserToutesSelectionsHistorique() {
+        document.querySelectorAll("[data-formulaire-suppression]").forEach(actualiserSelectionHistorique);
+      }
+
+      function actualiserSelectionHistorique(formulaire) {
+        if (!formulaire) {
+          return;
+        }
+
+        const cases = Array.from(formulaire.querySelectorAll("[data-selection-historique]"));
+        const casesCochees = cases.filter((casePaiement) => casePaiement.checked);
+        const selectionTout = formulaire.querySelector("[data-selection-tout-historique]");
+        const bouton = formulaire.querySelector("[data-bouton-suppression-historique]");
+        const compteur = formulaire.querySelector("[data-compteur-selection-historique]");
+
+        if (selectionTout) {
+          selectionTout.checked = cases.length > 0 && casesCochees.length === cases.length;
+          selectionTout.indeterminate = casesCochees.length > 0 && casesCochees.length < cases.length;
+        }
+
+        if (bouton) {
+          bouton.disabled = casesCochees.length === 0;
+        }
+
+        if (compteur) {
+          compteur.textContent = casesCochees.length + " selectionne(s)";
+        }
+
+        appliquerMiseAJourEnAttenteSiPossible();
+      }
+
+      function demanderConfirmationSimple(options) {
+        return new Promise((resolve) => {
+          modaleDecision.hidden = false;
+          badgeModaleDecision.textContent = options.badge || "Confirmation";
+          titreModaleDecision.textContent = options.titre || "Confirmer l'action";
+          texteModaleDecision.textContent = options.texte || "Confirmer cette action ?";
+          zoneRaisonRefus.hidden = true;
+          erreurRaisonRefus.hidden = true;
+          champRaisonRefus.value = "";
+          boutonConfirmerModale.textContent = options.bouton || "Confirmer";
+          boutonConfirmerModale.className = options.classeBouton || "";
+
+          fermetureModaleActive = (confirmee) => {
+            resolve(Boolean(confirmee));
+
+            if (confirmee) {
+              fermerModaleDecision(false, true);
+            }
+          };
+
+          boutonConfirmerModale.onclick = () => fermetureModaleActive(true);
+          window.setTimeout(() => boutonConfirmerModale.focus(), 0);
+        });
+      }
+
+      function initialiserTempsReelMarchand() {
+        if (!window.EventSource) {
+          return;
+        }
+
+        const source = new EventSource("/api/temps-reel/marchand");
+        const gererEvenementDonnees = () => planifierRafraichissementMarchand();
+
+        source.addEventListener("paiement.maj", gererEvenementDonnees);
+        source.addEventListener("historique.supprime", gererEvenementDonnees);
+        source.addEventListener("configuration.modifiee", (evenement) => {
+          appliquerThemeTempsReelDepuisEvenement(evenement);
+          planifierRafraichissementMarchand();
+        });
+        source.addEventListener("theme.modifie", appliquerThemeTempsReelDepuisEvenement);
+      }
+
+      function planifierRafraichissementMarchand() {
+        window.clearTimeout(minuteurRafraichissementMarchand);
+        minuteurRafraichissementMarchand = window.setTimeout(() => {
+          rafraichirTableauMarchand();
+        }, 250);
+      }
+
+      async function rafraichirTableauMarchand(options = {}) {
+        if (rafraichissementMarchandEnCours) {
+          relanceRafraichissementMarchand = true;
+          return;
+        }
+
+        if (!options.forcer && interfaceMarchandOccupee()) {
+          miseAJourMarchandEnAttente = true;
+          afficherMessageAction("Nouvelles donnees recues. Elles seront appliquees apres l'action en cours.", "info");
+          return;
+        }
+
+        rafraichissementMarchandEnCours = true;
+
+        try {
+          const reponse = await fetch("/marchand/fragments", {
+            headers: { "accept": "application/json" }
+          });
+          const fragments = await lireJson(reponse);
+
+          if (!reponse.ok) {
+            throw new Error(fragments.message || "Fragments indisponibles.");
+          }
+
+          appliquerThemeTempsReel(fragments.theme);
+          remplacerHtmlElement("resumeMarchand", fragments.resumeHtml);
+          remplacerSectionPaiements("a-controler", fragments.sections.aControler);
+          remplacerSectionPaiements("en-attente", fragments.sections.enAttente);
+          remplacerSectionPaiements("finalisees", fragments.sections.finalisees);
+          remplacerSectionPaiements("abandonnes", fragments.sections.abandonnes);
+          actualiserToutesSelectionsHistorique();
+          miseAJourMarchandEnAttente = false;
+        } catch {
+          afficherMessageAction("Mise a jour temps reel indisponible. Les actions restent disponibles.", "avertissement");
+        } finally {
+          rafraichissementMarchandEnCours = false;
+
+          if (relanceRafraichissementMarchand) {
+            relanceRafraichissementMarchand = false;
+
+            if (interfaceMarchandOccupee()) {
+              miseAJourMarchandEnAttente = true;
+              return;
+            }
+
+            planifierRafraichissementMarchand();
+          }
+        }
+      }
+
+      function remplacerHtmlElement(idElement, html) {
+        const element = document.getElementById(idElement);
+
+        if (element && typeof html === "string") {
+          element.innerHTML = html;
+        }
+      }
+
+      function remplacerSectionPaiements(section, html) {
+        const ancienneSection = document.querySelector('[data-section-paiements="' + section + '"]');
+
+        if (!ancienneSection || typeof html !== "string") {
+          return;
+        }
+
+        const etaitOuverte = ancienneSection.tagName === "DETAILS" && ancienneSection.open;
+        const modele = document.createElement("template");
+        modele.innerHTML = html.trim();
+        const nouvelleSection = modele.content.firstElementChild;
+
+        if (!nouvelleSection) {
+          return;
+        }
+
+        if (nouvelleSection.tagName === "DETAILS" && etaitOuverte) {
+          nouvelleSection.open = true;
+        }
+
+        ancienneSection.replaceWith(nouvelleSection);
+      }
+
+      function interfaceMarchandOccupee() {
+        return (
+          !modaleDecision.hidden ||
+          document.querySelectorAll("[data-selection-historique]:checked").length > 0
+        );
+      }
+
+      function appliquerMiseAJourEnAttenteSiPossible() {
+        if (miseAJourMarchandEnAttente && !interfaceMarchandOccupee()) {
+          rafraichirTableauMarchand({ forcer: true });
+        }
+      }
+
+      function appliquerThemeTempsReelDepuisEvenement(evenement) {
+        try {
+          const donnees = JSON.parse(evenement.data);
+          appliquerThemeTempsReel(donnees.theme || donnees);
+        } catch {
+          return;
+        }
+      }
+
+      function appliquerThemeTempsReel(theme) {
+        if (!theme || !theme.css) {
+          return;
+        }
+
+        const styleTheme = document.getElementById("styleThemeInterfaceTempsReel");
+
+        if (styleTheme) {
+          styleTheme.textContent = theme.css;
+        }
+
+        if (theme.themeInterface) {
+          document.body.dataset.themeInterface = theme.themeInterface;
+        }
       }
 
       async function lireJson(reponse) {
@@ -346,10 +570,6 @@ function afficherMarchand(paiements, options = {}) {
         zoneMessage.hidden = false;
       }
 
-      function memoriserMessageAction(message, type) {
-        window.localStorage.setItem("messageActionMarchand", JSON.stringify({ message, type }));
-      }
-
       function afficherMessageMemorise() {
         const messageMemoire = window.localStorage.getItem("messageActionMarchand");
 
@@ -368,6 +588,156 @@ function afficherMarchand(paiements, options = {}) {
       }
     </script>
   `, { themeInterface: options.themeInterface });
+}
+
+function afficherFragmentsMarchand(paiements) {
+  return afficherFragmentsMarchandDepuisDonnees(preparerDonneesMarchand(paiements));
+}
+
+function preparerDonneesMarchand(paiements) {
+  const paiementsTries = [...paiements].sort((a, b) => b.creeLe.localeCompare(a.creeLe));
+  const paiementsFinalises = paiementsTries.filter((paiement) => {
+    return paiement.statut === "PAYE" || paiement.statut === "REFUSE";
+  });
+  const paiementsAbandonnes = paiementsTries.filter((paiement) => paiement.statut === "ABANDONNE");
+  const paiementsAControler = paiementsTries.filter((paiement) => {
+    return Boolean(
+      paiement.preuve &&
+      paiement.verification &&
+      paiement.statut !== "PAYE" &&
+      paiement.statut !== "REFUSE" &&
+      paiement.statut !== "ABANDONNE"
+    );
+  });
+  const paiementsEnAttente = paiementsTries.filter((paiement) => {
+    return (
+      paiement.statut !== "ABANDONNE" &&
+      paiement.statut !== "PAYE" &&
+      paiement.statut !== "REFUSE" &&
+      (!paiement.preuve || !paiement.verification)
+    );
+  });
+  const statistiques = construireStatistiquesMarchand({
+    paiements: paiementsTries,
+    paiementsAControler,
+    paiementsEnAttente,
+    paiementsFinalises,
+    paiementsAbandonnes,
+  });
+
+  return {
+    paiementsTries,
+    paiementsFinalises,
+    paiementsAbandonnes,
+    paiementsAControler,
+    paiementsEnAttente,
+    statistiques,
+    lignesAControler: paiementsAControler.map(afficherLignePaiement).join(""),
+    lignesEnAttente: paiementsEnAttente.map(afficherLignePaiement).join(""),
+    lignesFinalisees: paiementsFinalises
+      .map((paiement) => afficherLignePaiement(paiement, { suppressionHistorique: true }))
+      .join(""),
+    lignesAbandonnees: paiementsAbandonnes
+      .map((paiement) => afficherLignePaiement(paiement, { suppressionHistorique: true }))
+      .join(""),
+  };
+}
+
+function afficherFragmentsMarchandDepuisDonnees(donnees) {
+  return {
+    resumeHtml: donnees.statistiques.map(afficherCarteStatistique).join(""),
+    sections: {
+      aControler: afficherSectionAControler(donnees),
+      enAttente: afficherSectionEnAttente(donnees),
+      finalisees: afficherSectionFinalisees(donnees),
+      abandonnes: afficherSectionAbandonnes(donnees),
+    },
+  };
+}
+
+function afficherSectionAControler(donnees) {
+  return `
+    <section class="section-marchand section-prioritaire" data-section-paiements="a-controler">
+      <div class="entete-section-marchand">
+        <div>
+          <p class="sur-titre">Priorite</p>
+          <h2>Justificatifs a controler</h2>
+        </div>
+        ${afficherCompteurSection(donnees.paiementsAControler.length)}
+      </div>
+      <p class="description-section">Paiements avec recu recu. Verifiez votre compte de paiement, puis acceptez ou refusez.</p>
+      <div class="liste-paiements-marchand">
+        ${donnees.lignesAControler || afficherEtatVide("Aucun justificatif a controler", "Les nouvelles preuves apparaitront ici des leur reception.")}
+      </div>
+    </section>
+  `;
+}
+
+function afficherSectionEnAttente(donnees) {
+  return `
+    <details class="section-marchand" data-section-paiements="en-attente" ${donnees.paiementsAControler.length === 0 ? "open" : ""}>
+      <summary>
+        <span>Paiements en attente du justificatif</span>
+        ${afficherCompteurSection(donnees.paiementsEnAttente.length)}
+      </summary>
+      <p class="description-section">Paiements crees ou ouverts par le client, mais sans recu valide envoye. Aucune decision marchand n'est attendue ici.</p>
+      <div class="liste-paiements-marchand">
+        ${donnees.lignesEnAttente || afficherEtatVide("Aucun paiement en attente", "Les paiements sans preuve seront regroupes ici.")}
+      </div>
+    </details>
+  `;
+}
+
+function afficherSectionFinalisees(donnees) {
+  return `
+    <details class="section-marchand" data-section-paiements="finalisees">
+      <summary>
+        <span>Decisions finales</span>
+        ${afficherCompteurSection(donnees.paiementsFinalises.length)}
+      </summary>
+      <p class="description-section">Paiements deja acceptes ou refuses. Les notifications peuvent etre renvoyees si le site marchand ne les a pas recues.</p>
+      ${donnees.paiementsFinalises.length > 0
+        ? `
+          <form method="post" action="/marchand/paiements/supprimer" class="formulaire-suppression-historique" data-formulaire-suppression>
+            ${afficherBarreSuppressionHistorique("finalisees")}
+            <div class="liste-paiements-marchand">
+              ${donnees.lignesFinalisees}
+            </div>
+          </form>
+        `
+        : `
+          <div class="liste-paiements-marchand">
+            ${afficherEtatVide("Aucune decision finale", "Les paiements acceptes ou refuses apparaitront ici.")}
+          </div>
+        `}
+    </details>
+  `;
+}
+
+function afficherSectionAbandonnes(donnees) {
+  return `
+    <details class="section-marchand" data-section-paiements="abandonnes">
+      <summary>
+        <span>Paiements abandonnes</span>
+        ${afficherCompteurSection(donnees.paiementsAbandonnes.length)}
+      </summary>
+      <p class="description-section">Paiements arretes avant reception d'un justificatif valide, souvent apres annulation ou retour du client vers l'application marchande.</p>
+      ${donnees.paiementsAbandonnes.length > 0
+        ? `
+          <form method="post" action="/marchand/paiements/supprimer" class="formulaire-suppression-historique" data-formulaire-suppression>
+            ${afficherBarreSuppressionHistorique("abandonnes")}
+            <div class="liste-paiements-marchand">
+              ${donnees.lignesAbandonnees}
+            </div>
+          </form>
+        `
+        : `
+          <div class="liste-paiements-marchand">
+            ${afficherEtatVide("Aucun paiement abandonne", "Les abandons client seront archives dans cette section.")}
+          </div>
+        `}
+    </details>
+  `;
 }
 
 function construireStatistiquesMarchand(donnees) {
@@ -455,7 +825,44 @@ function afficherEtatVide(titre, description) {
   `;
 }
 
-function afficherLignePaiement(paiement) {
+function afficherBarreSuppressionHistorique(idSection) {
+  return `
+    <div class="barre-suppression-historique">
+      <label class="selection-tout-historique">
+        <input type="checkbox" data-selection-tout-historique="${echapperHtml(idSection)}">
+        <span>Tout selectionner</span>
+      </label>
+      <span class="compteur-selection-historique" data-compteur-selection-historique>0 selectionne(s)</span>
+      <button type="submit" class="bouton-danger" data-bouton-suppression-historique disabled>Supprimer</button>
+    </div>
+  `;
+}
+
+function afficherRetourSuppressionHistorique(options) {
+  const supprimes = Number(options.supprimesHistorique || 0);
+  const ignores = Number(options.ignoresSuppressionHistorique || 0);
+
+  if (!supprimes && !ignores) {
+    return "";
+  }
+
+  const classe = supprimes > 0 ? "succes" : "avertissement";
+  const message = supprimes > 0
+    ? `${supprimes} element(s) d'historique supprime(s).`
+    : "Aucun element supprimable n'a ete retire.";
+  const detail = ignores > 0
+    ? `<p>${ignores} paiement(s) conserve(s), car ils ne sont pas dans un historique supprimable.</p>`
+    : "";
+
+  return `
+    <div class="retour-action ${classe}" role="status">
+      ${echapperHtml(message)}
+      ${detail}
+    </div>
+  `;
+}
+
+function afficherLignePaiement(paiement, options = {}) {
   const alertesVerification = paiement.verification && Array.isArray(paiement.verification.alertes)
     ? paiement.verification.alertes
     : [];
@@ -495,10 +902,19 @@ function afficherLignePaiement(paiement) {
     decisionFinale &&
     Boolean(paiement.urlWebhook) &&
     (!paiement.dernierWebhook || paiement.dernierWebhook.statut !== "RECU");
+  const selectionHistorique = options.suppressionHistorique
+    ? `
+      <label class="selection-paiement-historique">
+        <input type="checkbox" name="idsPaiements" value="${echapperHtml(paiement.id)}" data-selection-historique>
+        <span>Selectionner pour suppression definitive</span>
+      </label>
+    `
+    : "";
 
   return `
     <article class="paiement-marchand ${classePaiement(paiement)}">
       <div class="paiement-marchand-corps">
+        ${selectionHistorique}
         <div class="paiement-marchand-entete">
           <div>
             <p class="sur-titre-paiement">${echapperHtml(paiement.id)}</p>
@@ -856,5 +1272,7 @@ function formaterDate(valeur) {
     timeStyle: "short",
   });
 }
+
+afficherMarchand.afficherFragments = afficherFragmentsMarchand;
 
 module.exports = afficherMarchand;
